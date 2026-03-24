@@ -1,4 +1,3 @@
-
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from rest_framework import status
@@ -23,15 +22,12 @@ def create_user(request):
     mobile = data.get('mobile')
     address = data.get('address')
 
-    # validação básica
     if not username or not email or not password or not name:
         return Response({'message': 'Campos obrigatórios em falta'}, status=400)
 
-    # verificar duplicados
     if User.objects.filter(username=username).exists() or User.objects.filter(email=email).exists():
         return Response({'message': 'Username ou email já existe'}, status=409)
-
-    # hash password
+    
     hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
 
     user = User.objects.create(
