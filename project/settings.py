@@ -46,7 +46,7 @@ DATABASES = {
         'NAME': 'bd',
         'USER': 'user',
         'PASSWORD': 'password',
-        'HOST': os.environ.get('DB_HOST', 'db'),  # Use 'db' by default (Docker), or env variable
+        'HOST': os.environ.get('DB_HOST', 'localhost'),  # Use 'db' by default (Docker), or env variable
         'PORT': '5432',
     }
 }
