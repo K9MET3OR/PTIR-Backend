@@ -1,0 +1,7 @@
+Django
+djangorestframework
+psycopg2-binary
+PyJWT
+bcrypt
+firebase-admin
+django-cors-headers
