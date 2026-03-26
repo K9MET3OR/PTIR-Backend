@@ -11,6 +11,7 @@ class User(models.Model):
 
     uid = models.CharField(max_length=255, unique=True, null=True, blank=True)  # Firebase UID
     role = models.CharField(max_length=20, choices=[('gestor', 'Gestor'), ('motorista', 'Motorista'), ('cliente', 'Cliente')], default='cliente')
+    nif = models.CharField(max_length=9, unique=True, null=True, blank=True)
 
     mobile = models.CharField(max_length=20, null=True, blank=True)
     address = models.TextField(null=True, blank=True)

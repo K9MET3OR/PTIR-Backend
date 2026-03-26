@@ -5,3 +5,4 @@ PyJWT
 bcrypt
 firebase-admin
 django-cors-headers
+requests

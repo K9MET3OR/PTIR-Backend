@@ -8,6 +8,7 @@ INSTALLED_APPS = [
     'corsheaders',
     'rest_framework',
     'apps.users',
+    'apps.taxis',
 ]
 
 import os
@@ -39,6 +40,14 @@ CORS_ALLOWED_ORIGINS = [
 APPEND_SLASH = False
 
 STATIC_URL = '/static/'
+
+POSTAL_CODE_API_URL = os.environ.get(
+    'POSTAL_CODE_API_URL',
+    'https://www.cttcodigopostal.pt/api/getzipcode',
+)
+
+JWT_SECRET = os.environ.get('JWT_SECRET', SECRET_KEY)
+JWT_EXPIRY_HOURS = int(os.environ.get('JWT_EXPIRY_HOURS', 24))
 
 DATABASES = {
     'default': {
