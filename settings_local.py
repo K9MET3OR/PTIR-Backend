@@ -11,7 +11,7 @@ BASE_DIR = Path(__file__).resolve().parent
 INSTALLED_APPS = [
     'django.contrib.contenttypes',
     'django.contrib.staticfiles',
-    'apps.users',
+    'apps.user.apps.UserConfig',
 ]
 
 ALLOWED_HOSTS = ['*']
@@ -26,8 +26,8 @@ DATABASES = {
     }
 }
 
-from apps.users.models import User
-User.objects.create(username='gestor', email='gestor@hermez.com', name='Gestor Test', role='gestor')
+from apps.user.models import User
+User.objects.create(username='admin', email='admin@hermez.com', name='Admin Test', role='admin')
 User.objects.create(username='motorista', email='motorista33@hermez.com', name='Motorista Test', role='motorista')
 User.objects.create(username='cliente', email='client666@hermez.com', name='Cliente Test', role='cliente')
 exit()

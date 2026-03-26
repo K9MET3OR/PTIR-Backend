@@ -7,8 +7,8 @@ INSTALLED_APPS = [
 
     'corsheaders',
     'rest_framework',
-    'apps.users',
-    'apps.taxis',
+    'apps.user.apps.UserConfig',
+    'apps.user.driver.apps.DriverConfig',
 ]
 
 import os
