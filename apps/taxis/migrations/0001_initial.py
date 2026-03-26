@@ -7,7 +7,7 @@ class Migration(migrations.Migration):
     initial = True
 
     dependencies = [
-        ('users', '0002_user_role_user_uid_alter_user_password'),
+        ('users', '0003_user_nif'),
     ]
 
     operations = [

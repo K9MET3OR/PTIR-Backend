@@ -1,14 +1,16 @@
 import re
-from datetime import date
+from datetime import date, datetime, timezone, timedelta
 
 import bcrypt
+import jwt
 import requests
 from django.conf import settings
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 
 from apps.users.models import User
+from apps.users.utils import validar_nif
 from .models import Motorista
 
 
@@ -118,8 +120,8 @@ def _validate_num_carta(num_carta: str):
 def registo_motorista(request):
     data = request.data
 
-    # --- Required field presence ---
-    required = ('username', 'email', 'password', 'name',
+    # --- Required field presence (nif is required: it is the sole login key) ---
+    required = ('username', 'email', 'password', 'name', 'nif',
                  'ano_nascimento', 'genero', 'num_carta_conducao', 'codigo_postal')
     missing = [f for f in required if not data.get(f)]
     if missing:
@@ -128,13 +130,18 @@ def registo_motorista(request):
             status=400,
         )
 
-    username         = data['username'].strip()
-    email            = data['email'].strip()
-    password         = data['password']
-    name             = data['name'].strip()
-    genero           = data['genero']
-    num_carta        = data['num_carta_conducao'].strip()
-    codigo_postal    = data['codigo_postal'].strip()
+    username      = data['username'].strip()
+    email         = data['email'].strip()
+    password      = data['password']
+    name          = data['name'].strip()
+    nif           = str(data['nif']).strip()
+    genero        = data['genero']
+    num_carta     = data['num_carta_conducao'].strip()
+    codigo_postal = data['codigo_postal'].strip()
+
+    # --- Validate NIF (mod-11) ---
+    if not validar_nif(nif):
+        return Response({'message': 'NIF inválido.'}, status=400)
 
     # --- Validate ano_nascimento ---
     ano_nascimento, err = _validate_ano_nascimento(data['ano_nascimento'])
@@ -158,29 +165,36 @@ def registo_motorista(request):
     if err:
         return err
 
-    # --- Uniqueness checks ---
-    if User.objects.filter(username=username).exists():
-        return Response({'message': 'Username já existe.'}, status=409)
-    if User.objects.filter(email=email).exists():
-        return Response({'message': 'Email já registado.'}, status=409)
-    if Motorista.objects.filter(num_carta_conducao=num_carta).exists():
-        return Response(
-            {'message': 'Número de carta de condução já registado.'},
-            status=409,
-        )
-
-    # --- Hash password ---
+    # --- Hash password (CPU-bound; do before acquiring DB transaction) ---
     hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
 
-    # --- Atomic creation: rollback both records if anything fails ---
+    # --- Atomic creation with uniqueness checks inside the transaction.
+    #     This eliminates the race-condition window that exists when the
+    #     checks run outside of atomic() — two concurrent requests could
+    #     both pass the pre-checks and then one would hit a DB-level
+    #     UNIQUE constraint, producing an IntegrityError that we now
+    #     catch explicitly instead of returning a generic 500. ---
     try:
         with transaction.atomic():
+            if User.objects.filter(username=username).exists():
+                return Response({'message': 'Username já existe.'}, status=409)
+            if User.objects.filter(email=email).exists():
+                return Response({'message': 'Email já registado.'}, status=409)
+            if User.objects.filter(nif=nif).exists():
+                return Response({'message': 'NIF já registado.'}, status=409)
+            if Motorista.objects.filter(num_carta_conducao=num_carta).exists():
+                return Response(
+                    {'message': 'Número de carta de condução já registado.'},
+                    status=409,
+                )
+
             user = User.objects.create(
                 username=username,
                 email=email,
                 password=hashed,
                 name=name,
                 role='motorista',
+                nif=nif,
             )
             motorista = Motorista.objects.create(
                 user=user,
@@ -190,6 +204,12 @@ def registo_motorista(request):
                 localidade=localidade,
                 codigo_postal=codigo_postal,
             )
+    except IntegrityError:
+        # Concurrent request won the race on a unique column.
+        return Response(
+            {'message': 'Dados duplicados. Verifique username, email, NIF ou carta de condução.'},
+            status=409,
+        )
     except Exception:
         return Response(
             {'message': 'Erro interno ao criar o registo. Tente novamente.'},
@@ -205,6 +225,7 @@ def registo_motorista(request):
                 'email':               user.email,
                 'name':                user.name,
                 'role':                user.role,
+                'nif':                 user.nif,
                 'ano_nascimento':      motorista.ano_nascimento,
                 'genero':              motorista.genero,
                 'num_carta_conducao':  motorista.num_carta_conducao,
@@ -213,4 +234,67 @@ def registo_motorista(request):
             },
         },
         status=201,
+    )
+
+
+# ---------------------------------------------------------------------------
+# POST /auth/login  (Auth04)
+# ---------------------------------------------------------------------------
+
+_INVALID_CREDENTIALS = {'message': 'Credenciais inválidas'}
+
+
+@api_view(['POST'])
+def login_nif(request):
+    data = request.data
+
+    nif      = str(data.get('nif', '')).strip()
+    password = data.get('password', '')
+
+    # --- NIF format + mod-11 check (no DB hit on failure) ---
+    if not validar_nif(nif):
+        return Response({'message': 'NIF inválido.'}, status=400)
+
+    if not password:
+        return Response({'message': 'password é obrigatória.'}, status=400)
+
+    # --- Lookup user by NIF ---
+    try:
+        user = User.objects.get(nif=nif)
+    except User.DoesNotExist:
+        return Response(_INVALID_CREDENTIALS, status=401)
+
+    # --- Verify password with bcrypt ---
+    stored_hash = user.password or ''
+    if not stored_hash:
+        return Response(_INVALID_CREDENTIALS, status=401)
+
+    try:
+        match = bcrypt.checkpw(password.encode('utf-8'), stored_hash.encode('utf-8'))
+    except Exception:
+        return Response(_INVALID_CREDENTIALS, status=401)
+
+    if not match:
+        return Response(_INVALID_CREDENTIALS, status=401)
+
+    # --- Generate JWT ---
+    now = datetime.now(tz=timezone.utc)
+    expiry = now + timedelta(hours=settings.JWT_EXPIRY_HOURS)
+
+    payload = {
+        'id':   str(user.id),
+        'nif':  user.nif,
+        'role': user.role,
+        'iat':  int(now.timestamp()),
+        'exp':  int(expiry.timestamp()),
+    }
+    token = jwt.encode(payload, settings.JWT_SECRET, algorithm='HS256')
+
+    return Response(
+        {
+            'token': token,
+            'role':  user.role,
+            'nome':  user.name,
+        },
+        status=200,
     )

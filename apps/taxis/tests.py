@@ -30,6 +30,7 @@ VALID_PAYLOAD = {
     'email':              'joao@example.com',
     'password':           'Seguro123',
     'name':               'João Silva',
+    'nif':                '123456789',   # mod-11 valid: check = 9
     'ano_nascimento':     1990,
     'genero':             'M',
     'num_carta_conducao': 'ABC12',
