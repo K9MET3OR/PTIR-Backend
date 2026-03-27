@@ -9,6 +9,7 @@ INSTALLED_APPS = [
     'rest_framework',
     'apps.user.apps.UserConfig',
     'apps.user.driver.apps.DriverConfig',
+    'apps.taxi.apps.TaxiConfig',
 ]
 
 import os
