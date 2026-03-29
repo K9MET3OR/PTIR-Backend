@@ -56,7 +56,17 @@ DATABASES = {
         'NAME': 'bd',
         'USER': 'user',
         'PASSWORD': 'password',
-        'HOST': os.environ.get('DB_HOST', 'localhost'),  # Use 'db' by default (Docker), or env variable
+        'HOST': os.environ.get('DB_HOST', 'db'),  # 'db' é o nome do serviço Docker
         'PORT': '5432',
     }
+}
+
+# REST Framework configuration
+REST_FRAMEWORK = {
+    'DEFAULT_RENDERER_CLASSES': [
+        'rest_framework.renderers.JSONRenderer',  # Apenas JSON
+    ],
+    'DEFAULT_PARSER_CLASSES': [
+        'rest_framework.parsers.JSONParser',
+    ],
 }

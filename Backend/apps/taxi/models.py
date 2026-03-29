@@ -13,8 +13,10 @@ class Taxi(models.Model):
     modelo = models.CharField(max_length=100)
     matricula = models.CharField(max_length=20, unique=True)
     ano_compra = models.PositiveIntegerField()
+    consumo_medio = models.DecimalField(max_digits=5, decimal_places=2, default=0)
     marca = models.CharField(max_length=50)
-    nivel_conforto = models.CharField(max_length=20, choices=[('baixo', 'Baixo'), ('medio', 'Medio'), ('alto', 'Alto')])
+    tipo_motor = models.CharField(max_length=50, choices=[('Gasolina', 'Gasolina'), ('Diesel', 'Diesel'), ('Elétrico', 'Elétrico'), ('Híbrido', 'Híbrido')], default='Gasolina')
+    nivel_conforto = models.CharField(max_length=20, choices=[('Standard', 'Standard'), ('Conforto', 'Conforto'), ('Premium', 'Premium')])
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
