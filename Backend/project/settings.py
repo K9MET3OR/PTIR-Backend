@@ -33,8 +33,10 @@ MIDDLEWARE = [
 CORS_ALLOWED_ORIGINS = [
     'http://localhost:5173',    # Vite dev server
     'http://localhost:5174',    # Alternative port
+    'http://localhost:5175',    # Another alternative port
     'http://127.0.0.1:5173',
     'http://127.0.0.1:5174',
+    'http://127.0.0.1:5175',
 ]
 
 # Avoid silent POST redirects on API endpoints when slash is missing
