@@ -14,6 +14,22 @@ from apps.user.utils import validar_nif
 from .models import Driver
 
 
+
+def motorista_para_json(motorista):
+    return {
+        'id': str(motorista.id),
+        'username': motorista.username,
+        'email': motorista.email,
+        'name': motorista.name,
+        'role': motorista.role,
+        'nif': motorista.nif,
+        'ano_nascimento': motorista.ano_nascimento,
+        'genero': motorista.genero,
+        'num_carta_conducao': motorista.num_carta_conducao,
+        'localidade': motorista.localidade,
+        'codigo_postal': motorista.codigo_postal,
+    }
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -295,6 +311,155 @@ def login_nif(request):
             'token': token,
             'role':  user.role,
             'nome':  user.name,
+        },
+        status=200,
+    )
+
+
+@api_view(['GET'])
+def listar_motoristas(request):
+    motoristas = Driver.objects.all().order_by('name')
+
+    resultado = []
+    for motorista in motoristas:
+        resultado.append(motorista_para_json(motorista))
+
+    return Response(
+        {
+            'success': True,
+            'motoristas': resultado,
+            'total': len(resultado),
+        },
+        status=200,
+    )
+
+
+@api_view(['GET', 'PATCH', 'PUT', 'DELETE'])
+def gerir_motorista(request, id_motorista):
+    motorista = Driver.objects.filter(pk=id_motorista).first()
+
+    if not motorista:
+        return Response({'message': 'Motorista nao encontrado.'}, status=404)
+
+    if request.method == 'GET':
+        return Response(
+            {
+                'success': True,
+                'motorista': motorista_para_json(motorista),
+            },
+            status=200,
+        )
+
+    if request.method == 'DELETE':
+        motorista_id = str(motorista.id)
+        motorista.delete()
+
+        return Response(
+            {
+                'success': True,
+                'message': 'Motorista apagado.',
+                'id': motorista_id,
+            },
+            status=200,
+        )
+
+    data = request.data
+
+    if not data:
+        return Response({'message': 'Nenhum campo para atualizar.'}, status=400)
+
+    if 'username' in data:
+        username = str(data['username']).strip()
+        if username == '':
+            return Response({'message': 'username e obrigatorio.'}, status=400)
+
+        existe = User.objects.filter(username=username).exclude(pk=motorista.pk).exists()
+        if existe:
+            return Response({'message': 'Username ja existe.'}, status=409)
+
+        motorista.username = username
+
+    if 'email' in data:
+        email = str(data['email']).strip()
+        if email == '':
+            return Response({'message': 'email e obrigatorio.'}, status=400)
+
+        existe = User.objects.filter(email=email).exclude(pk=motorista.pk).exists()
+        if existe:
+            return Response({'message': 'Email ja registado.'}, status=409)
+
+        motorista.email = email
+
+    if 'name' in data:
+        name = str(data['name']).strip()
+        if name == '':
+            return Response({'message': 'name e obrigatorio.'}, status=400)
+
+        motorista.name = name
+
+    if 'nif' in data:
+        nif = str(data['nif']).strip()
+        if not validar_nif(nif):
+            return Response({'message': 'NIF invalido.'}, status=400)
+
+        existe = User.objects.filter(nif=nif).exclude(pk=motorista.pk).exists()
+        if existe:
+            return Response({'message': 'NIF ja registado.'}, status=409)
+
+        motorista.nif = nif
+
+    if 'ano_nascimento' in data:
+        ano_nascimento, err = _validate_ano_nascimento(data['ano_nascimento'])
+        if err:
+            return err
+
+        motorista.ano_nascimento = ano_nascimento
+
+    if 'genero' in data:
+        genero = str(data['genero']).strip()
+        if genero not in ('M', 'F', 'Outro'):
+            return Response(
+                {'message': "genero deve ser 'M', 'F' ou 'Outro'."},
+                status=400,
+            )
+
+        motorista.genero = genero
+
+    if 'num_carta_conducao' in data:
+        num_carta = str(data['num_carta_conducao']).strip()
+
+        err = _validate_num_carta(num_carta)
+        if err:
+            return err
+
+        existe = Driver.objects.filter(num_carta_conducao=num_carta).exclude(pk=motorista.pk).exists()
+        if existe:
+            return Response(
+                {'message': 'Numero de carta de conducao ja registado.'},
+                status=409,
+            )
+
+        motorista.num_carta_conducao = num_carta
+
+    if 'codigo_postal' in data:
+        codigo_postal = str(data['codigo_postal']).strip()
+
+        localidade, err = _lookup_localidade(codigo_postal)
+        if err:
+            return err
+
+        motorista.codigo_postal = codigo_postal
+        motorista.localidade = localidade
+
+    try:
+        motorista.save()
+    except IntegrityError:
+        return Response({'message': 'Erro ao atualizar motorista.'}, status=409)
+
+    return Response(
+        {
+            'success': True,
+            'motorista': motorista_para_json(motorista),
         },
         status=200,
     )

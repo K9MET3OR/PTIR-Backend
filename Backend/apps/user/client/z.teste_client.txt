@@ -1,0 +1,32 @@
+# 1. Registar client
+Invoke-RestMethod -Method Post `
+  -Uri "http://localhost:8000/auth/client/registo" `
+  -ContentType "application/json" `
+  -Body '{"username":"cliente1","email":"cliente1@example.com","password":"Teste123","name":"Cliente Um","nif":"123456789"}'
+
+# 2. Login client
+Invoke-RestMethod -Method Post `
+  -Uri "http://localhost:8000/auth/client/login" `
+  -ContentType "application/json" `
+  -Body '{"nif":"123456789","password":"Teste123"}'
+
+# 3. Listar clients
+Invoke-RestMethod -Method Get `
+  -Uri "http://localhost:8000/auth/client/"
+
+# 4. Ver um client
+# Substituir UUID_DO_CLIENT pelo id real devolvido no registo ou na listagem
+Invoke-RestMethod -Method Get `
+  -Uri "http://localhost:8000/auth/client/UUID_DO_CLIENT/"
+
+# 5. Atualizar client
+# Substituir UUID_DO_CLIENT pelo id real
+Invoke-RestMethod -Method Patch `
+  -Uri "http://localhost:8000/auth/client/UUID_DO_CLIENT/" `
+  -ContentType "application/json" `
+  -Body '{"name":"Cliente Atualizado"}'
+
+# 6. Apagar client
+# Substituir UUID_DO_CLIENT pelo id real
+Invoke-RestMethod -Method Delete `
+  -Uri "http://localhost:8000/auth/client/UUID_DO_CLIENT/"

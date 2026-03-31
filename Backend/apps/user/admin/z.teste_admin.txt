@@ -1,0 +1,32 @@
+# 1. Registar admin
+Invoke-RestMethod -Method Post `
+  -Uri "http://localhost:8000/auth/admin/registo" `
+  -ContentType "application/json" `
+  -Body '{"username":"admin1","email":"admin1@example.com","password":"Teste123","name":"Admin Um","nif":"987654322"}'
+
+# 2. Login admin
+Invoke-RestMethod -Method Post `
+  -Uri "http://localhost:8000/auth/admin/login" `
+  -ContentType "application/json" `
+  -Body '{"nif":"987654322","password":"Teste123"}'
+
+# 3. Listar admins
+Invoke-RestMethod -Method Get `
+  -Uri "http://localhost:8000/auth/admin/"
+
+# 4. Ver um admin
+# Substituir UUID_DO_ADMIN pelo id real devolvido no registo ou na listagem
+Invoke-RestMethod -Method Get `
+  -Uri "http://localhost:8000/auth/admin/UUID_DO_ADMIN/"
+
+# 5. Atualizar admin
+# Substituir UUID_DO_ADMIN pelo id real
+Invoke-RestMethod -Method Patch `
+  -Uri "http://localhost:8000/auth/admin/UUID_DO_ADMIN/" `
+  -ContentType "application/json" `
+  -Body '{"name":"Admin Atualizado"}'
+
+# 6. Apagar admin
+# Substituir UUID_DO_ADMIN pelo id real
+Invoke-RestMethod -Method Delete `
+  -Uri "http://localhost:8000/auth/admin/UUID_DO_ADMIN/"
