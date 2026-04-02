@@ -1,7 +1,6 @@
 from django.apps import AppConfig
 
 
-class ClientConfig(AppConfig):
+class TripConfig(AppConfig):
     default_auto_field = 'django.db.models.BigAutoField'
-    name = 'apps.user.client'
-    label = 'client'
+    name = 'apps.trip'
