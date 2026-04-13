@@ -29,11 +29,13 @@ class Trip(models.Model):
         on_delete=models.CASCADE,
         related_name="trips"
     )
-    # shift = models.ForeignKey(
-    #     "shift.Shift",
-    #     on_delete=models.CASCADE,
-    #     related_name="trips"
-    # )
+    shift = models.ForeignKey(
+        "shift.Shift",
+        on_delete=models.CASCADE,
+        related_name="trips",
+        null=True,
+        blank=True
+    )
 
     start_location = models.CharField(max_length=255)
     end_location = models.CharField(max_length=255)

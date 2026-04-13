@@ -13,6 +13,9 @@ INSTALLED_APPS = [
     'apps.user.admin.apps.AdminConfig',
     'apps.taxi.apps.TaxiConfig',
     'apps.trip.apps.TripConfig',
+    'apps.shift.apps.ShiftConfig',
+    'apps.refuel.apps.RefuelConfig',
+    'apps.invoice.apps.InvoiceConfig',
 ]
 
 import os
