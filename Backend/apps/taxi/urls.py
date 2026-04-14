@@ -8,5 +8,7 @@ urlpatterns = [
     path('calcular-preco-com-conforto', views.calcular_preco_com_conforto),
     path('', views.listar_taxis),
     path('<uuid:id_taxi>/apagar', views.apagar_taxi),
+    path('<uuid:id_taxi>/estado', views.atualizar_estado_taxi),
+    path('<uuid:id_taxi>/localizacao', views.atualizar_localizacao_taxi),
     path('<uuid:id_taxi>/', views.gerir_taxi),
 ]
