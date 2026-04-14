@@ -9,7 +9,13 @@ INSTALLED_APPS = [
     'rest_framework',
     'apps.user.apps.UserConfig',
     'apps.user.driver.apps.DriverConfig',
+    'apps.user.client.apps.ClientConfig',
+    'apps.user.admin.apps.AdminConfig',
     'apps.taxi.apps.TaxiConfig',
+    'apps.trip.apps.TripConfig',
+    'apps.shift.apps.ShiftConfig',
+    'apps.refuel.apps.RefuelConfig',
+    'apps.invoice.apps.InvoiceConfig',
 ]
 
 import os
@@ -73,7 +79,7 @@ DATABASES = {
         'NAME': 'bd',
         'USER': 'user',
         'PASSWORD': 'password',
-        'HOST': os.environ.get('DB_HOST', 'db'),  # 'db' é o nome do serviço Docker
+        'HOST': os.environ.get('DB_HOST', 'localhost'),  # 'db' é o nome do serviço Docker
         'PORT': '5432',
     }
 }
