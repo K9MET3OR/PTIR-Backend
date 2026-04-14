@@ -25,7 +25,8 @@ _MOTOR_CANON = {
 }
 _NIVEL_VALIDOS = frozenset(_NIVEL_CANON.keys())
 _MOTOR_VALIDOS = frozenset(_MOTOR_CANON.keys())
-_TAXI_UPDATE_FIELDS = frozenset(('modelo', 'matricula', 'ano_compra', 'consumo_medio', 'marca', 'tipo_motor', 'nivel_conforto'))
+_TAXI_UPDATE_FIELDS = frozenset(('modelo', 'matricula', 'ano_compra', 'consumo_medio', 'marca', 'tipo_motor', 'nivel_conforto', 'estado', 'latitude', 'longitude'))
+_ESTADO_VALIDOS = frozenset(('disponivel', 'indisponivel', 'ocupado'))
 
 # ---------------------------------------------------------------------------
 # Helpers — serialização
@@ -48,6 +49,9 @@ def _taxi_to_dict(taxi: Taxi) -> dict:
         'marca': taxi.marca or '',
         'tipo_motor': tipo_motor,
         'nivel_conforto': nivel_conforto,
+        'estado': taxi.estado,
+        'latitude': float(taxi.latitude) if taxi.latitude is not None else None,
+        'longitude': float(taxi.longitude) if taxi.longitude is not None else None,
         'created_at': taxi.created_at.isoformat() if taxi.created_at else None,
         'updated_at': taxi.updated_at.isoformat() if taxi.updated_at else None,
     }
@@ -225,6 +229,21 @@ def validate_taxi_update_payload(data):
         if nv not in _NIVEL_VALIDOS:
             return "nivel_conforto deve ser 'Standard', 'Conforto' ou 'Premium'."
 
+    if 'estado' in data and data['estado'] not in (None, ''):
+        estado = str(data['estado']).strip().lower()
+        if estado not in _ESTADO_VALIDOS:
+            return "estado deve ser 'disponivel', 'indisponivel' ou 'ocupado'."
+
+    if 'latitude' in data and data['latitude'] is not None:
+        lat, err = _parse_coordinate(data['latitude'], 'latitude')
+        if err or not (-90 <= lat <= 90):
+            return 'latitude deve estar entre -90 e 90.'
+
+    if 'longitude' in data and data['longitude'] is not None:
+        lng, err = _parse_coordinate(data['longitude'], 'longitude')
+        if err or not (-180 <= lng <= 180):
+            return 'longitude deve estar entre -180 e 180.'
+
     return None
 
 
@@ -247,6 +266,22 @@ def _apply_taxi_updates(taxi: Taxi, data: dict) -> None:
     if 'nivel_conforto' in data and data['nivel_conforto'] not in (None, ''):
         nv = str(data['nivel_conforto']).strip().lower()
         taxi.nivel_conforto = _NIVEL_CANON.get(nv, taxi.nivel_conforto)
+    if 'estado' in data and data['estado'] not in (None, ''):
+        estado = str(data['estado']).strip().lower()
+        if estado in _ESTADO_VALIDOS:
+            taxi.estado = estado
+    if 'latitude' in data:
+        if data['latitude'] is not None:
+            lat, _ = _parse_coordinate(data['latitude'], 'latitude')
+            taxi.latitude = lat
+        else:
+            taxi.latitude = None
+    if 'longitude' in data:
+        if data['longitude'] is not None:
+            lng, _ = _parse_coordinate(data['longitude'], 'longitude')
+            taxi.longitude = lng
+        else:
+            taxi.longitude = None
 
 
 def _get_taxi_or_response(id_taxi):
@@ -307,6 +342,63 @@ def _consumo_para_calculo(data):
         return None, err_resp
     assert taxi is not None
     return taxi.consumo_medio, None
+
+
+# ---------------------------------------------------------------------------
+# Helpers — Gestão de Estado e Localização
+# ---------------------------------------------------------------------------
+
+
+def _marcar_taxi_disponivel(taxi: Taxi) -> None:
+    """Marca o taxi como disponível."""
+    taxi.estado = 'disponivel'
+    taxi.save()
+
+
+def _marcar_taxi_indisponivel(taxi: Taxi) -> None:
+    """Marca o taxi como indisponível."""
+    taxi.estado = 'indisponivel'
+    taxi.save()
+
+
+def _marcar_taxi_ocupado(taxi: Taxi) -> None:
+    """Marca o taxi como ocupado."""
+    taxi.estado = 'ocupado'
+    taxi.save()
+
+
+def _taxi_is_disponivel(taxi: Taxi) -> bool:
+    """Verifica se o taxi está disponível."""
+    return taxi.estado == 'disponivel'
+
+
+def _taxi_is_indisponivel(taxi: Taxi) -> bool:
+    """Verifica se o taxi está indisponível."""
+    return taxi.estado == 'indisponivel'
+
+
+def _taxi_is_ocupado(taxi: Taxi) -> bool:
+    """Verifica se o taxi está ocupado."""
+    return taxi.estado == 'ocupado'
+
+
+def _atualizar_localizacao_taxi(taxi: Taxi, latitude: float, longitude: float) -> None:
+    """Atualiza a localização (coordenadas GPS) do taxi."""
+    taxi.latitude = latitude
+    taxi.longitude = longitude
+    taxi.save()
+
+
+def _taxi_tem_localizacao(taxi: Taxi) -> bool:
+    """Verifica se o taxi tem coordenadas registadas."""
+    return taxi.latitude is not None and taxi.longitude is not None
+
+
+def _taxi_get_localizacao(taxi: Taxi) -> tuple | None:
+    """Retorna as coordenadas do taxi como tuplo (latitude, longitude)."""
+    if _taxi_tem_localizacao(taxi):
+        return (float(taxi.latitude), float(taxi.longitude))
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -440,6 +532,120 @@ def calcular_valor_viagem(request):
             'litros_estimados': round(float(litros_estimados), 3),
             'preco_combustivel_eur_l': round(float(preco_combustivel), 3),
             'valor_estimado_eur': round(float(custo_estimado), 2),
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Views — Gestão de Estado e Localização
+# ---------------------------------------------------------------------------
+
+
+@api_view(['PATCH', 'PUT', 'POST'])
+def atualizar_estado_taxi(request, id_taxi):
+    """
+    Atualiza o estado do taxi.
+
+    Body esperado:
+      {
+        "estado": "disponivel"  # ou "indisponivel" / "ocupado"
+      }
+
+    Também suporta os métodos de conveniência:
+      - POST /taxi/{id}/estado com "action": "disponivel" etc.
+    """
+    taxi, err_resp = _get_taxi_or_response(id_taxi)
+    if err_resp:
+        return err_resp
+
+    assert taxi is not None
+
+    data = request.data or {}
+    estado = data.get('estado') or data.get('action')
+
+    if not estado:
+        return Response(
+            {'message': 'Campo "estado" ou "action" é obrigatório.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    estado = str(estado).strip().lower()
+    if estado not in _ESTADO_VALIDOS:
+        return Response(
+            {'message': f"Estado deve ser um de: {', '.join(_ESTADO_VALIDOS)}"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    taxi.estado = estado
+    taxi.save()
+    taxi.refresh_from_db()
+
+    return Response(
+        {
+            'success': True,
+            'message': f'Estado do taxi atualizado para: {estado}',
+            'taxi': _taxi_to_dict(taxi),
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
+@api_view(['PATCH', 'PUT', 'POST'])
+def atualizar_localizacao_taxi(request, id_taxi):
+    """
+    Atualiza a localização (coordenadas GPS) do taxi.
+
+    Body esperado:
+      {
+        "latitude": 40.6366,
+        "longitude": -8.6538
+      }
+    """
+    taxi, err_resp = _get_taxi_or_response(id_taxi)
+    if err_resp:
+        return err_resp
+
+    assert taxi is not None
+
+    data = request.data or {}
+    latitude = data.get('latitude')
+    longitude = data.get('longitude')
+
+    if latitude is None or longitude is None:
+        return Response(
+            {'message': 'Campos "latitude" e "longitude" são obrigatórios.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    lat, lat_err = _parse_coordinate(latitude, 'latitude')
+    if lat_err:
+        return Response({'message': lat_err}, status=status.HTTP_400_BAD_REQUEST)
+
+    lng, lng_err = _parse_coordinate(longitude, 'longitude')
+    if lng_err:
+        return Response({'message': lng_err}, status=status.HTTP_400_BAD_REQUEST)
+
+    if not (-90 <= lat <= 90):
+        return Response(
+            {'message': 'Latitude deve estar entre -90 e 90.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if not (-180 <= lng <= 180):
+        return Response(
+            {'message': 'Longitude deve estar entre -180 e 180.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    _atualizar_localizacao_taxi(taxi, lat, lng)
+    taxi.refresh_from_db()
+
+    return Response(
+        {
+            'success': True,
+            'message': 'Localização do taxi atualizada.',
+            'taxi': _taxi_to_dict(taxi),
         },
         status=status.HTTP_200_OK,
     )
