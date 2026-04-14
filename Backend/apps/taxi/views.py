@@ -443,3 +443,60 @@ def calcular_valor_viagem(request):
         },
         status=status.HTTP_200_OK,
     )
+
+
+# ---------------------------------------------------------------------------
+# Views — Pricing (algoritmo com multiplier de conforto)
+# ---------------------------------------------------------------------------
+
+@api_view(['POST'])
+def calcular_preco_com_conforto(request):
+    """
+    Calcula o preço da viagem usando o algoritmo dinâmico com multiplicador de conforto.
+    
+    Este endpoint é simples e rápido para usar no frontend.
+    
+    Body esperado:
+      {
+        "distancia_km": 12.2,
+        "duracao_minutos": 20,
+        "nivel_conforto": "Standard"  # ou "Conforto", "Premium"
+      }
+    
+    Response:
+      {
+        "success": true,
+        "price": 7.96,
+        "comfort_level": "Standard",
+        "breakdown": { ... }
+      }
+    """
+    from .pricing_service import PricingService
+    
+    data = request.data or {}
+    
+    try:
+        distancia_km = float(data.get('distancia_km', 0))
+        duracao_minutos = int(data.get('duracao_minutos', 0))
+        nivel_conforto = str(data.get('nivel_conforto', 'Standard')).strip()
+    except (TypeError, ValueError):
+        return Response(
+            {'message': 'distancia_km (float), duracao_minutos (int) e nivel_conforto (string) são obrigatórios.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    
+    try:
+        result = PricingService.calculate_price(
+            distance_km=distancia_km,
+            duration_minutes=duracao_minutos,
+            comfort_level=nivel_conforto
+        )
+        return Response(
+            {'success': True, **result},
+            status=status.HTTP_200_OK,
+        )
+    except ValueError as e:
+        return Response(
+            {'message': str(e)},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
