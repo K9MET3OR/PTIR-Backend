@@ -22,6 +22,8 @@ services:
       - .:/app
     ports:
       - "8000:8000"
+    environment:
+      - DB_HOST=db
     depends_on:
       - db
 
