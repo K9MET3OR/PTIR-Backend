@@ -9,6 +9,11 @@ class Driver(User):
         ('Outro', 'Outro'),
     ]
 
+    ESTADO_CHOICES = [
+        ('disponivel',   'Disponível'),
+        ('indisponivel', 'Indisponível'),
+    ]
+
     user_ptr = models.OneToOneField(
         User,
         on_delete=models.CASCADE,
@@ -20,8 +25,10 @@ class Driver(User):
     ano_nascimento = models.IntegerField()
     genero = models.CharField(max_length=5, choices=GENERO_CHOICES)
     num_carta_conducao = models.CharField(max_length=50, unique=True)
-    localidade = models.CharField(max_length=150)
-    codigo_postal = models.CharField(max_length=10)
+    validade_carta = models.DateField(null=True, blank=True)
+    localidade = models.CharField(max_length=150, blank=True, default='')
+    codigo_postal = models.CharField(max_length=10, blank=True, default='')
+    estado = models.CharField(max_length=20, choices=ESTADO_CHOICES, default='indisponivel')
 
     class Meta:
         db_table = 'motoristas'
