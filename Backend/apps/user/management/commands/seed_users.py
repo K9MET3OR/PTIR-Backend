@@ -7,6 +7,13 @@ from apps.user.models import User
 
 SEED_USERS = [
     {
+        'email':    'gestor@gestor.com',
+        'password': '123456',
+        'username': 'gestor',
+        'name':     'Gestor Teste',
+        'role':     'gestor',
+    },
+    {
         'email':    'admin@admin.com',
         'password': '123456',
         'username': 'admin',
