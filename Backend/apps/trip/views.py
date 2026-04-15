@@ -1,11 +1,15 @@
 from django.shortcuts import render
-from django.db import IntegrityError
+from django.db import IntegrityError, connection
 from django.conf import settings
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from rest_framework import status
 from .models import Trip
 import stripe
+from django.utils import timezone
+from apps.user.models import User
+from apps.user.client.models import Client
+from django.utils.dateparse import parse_datetime
 
 stripe.api_key = settings.STRIPE_SECRET_KEY if hasattr(settings, 'STRIPE_SECRET_KEY') else None
 
@@ -23,13 +27,13 @@ def trip_para_json(trip):
         'start_location': trip.start_location,
         'end_location': trip.end_location,
         'n_people': trip.n_people,
+        'nivel_conforto': trip.nivel_conforto,
         'n_kms': str(trip.n_kms) if trip.n_kms is not None else None,
         'price': str(trip.price) if trip.price is not None else None,
         'status_trip': trip.status_trip,
         'created_at': trip.created_at.isoformat() if trip.created_at else None,
         'updated_at': trip.updated_at.isoformat() if trip.updated_at else None,
     }
-
 
 @api_view(['POST'])
 def registar_trip(request):
@@ -42,23 +46,60 @@ def registar_trip(request):
         'n_people',
     ]
 
+    # 1) Validar campos obrigatórios
     for campo in campos_obrigatorios:
         if campo not in data or str(data[campo]).strip() == '':
             return Response({'message': f'{campo} é obrigatório.'}, status=400)
 
+    # 2) Validar número de pessoas
+    try:
+        n_people = int(data['n_people'])
+    except (TypeError, ValueError):
+        return Response({'message': 'n_people inválido.'}, status=400)
+
+    if n_people < 1 or n_people > 4:
+        return Response({'message': 'n_people deve estar entre 1 e 4.'}, status=400)
+
+    # 3) Obter utilizador cliente
+    try:
+        user = User.objects.get(pk=data['client_id'], role='cliente')
+    except User.DoesNotExist:
+        return Response({'message': 'Cliente inválido.'}, status=400)
+
+    # 4) Garantir que existe registo na tabela Client
+    client = Client.objects.filter(pk=user.pk).first()
+    if not client:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "INSERT INTO clients (user_id) VALUES (%s) ON CONFLICT (user_id) DO NOTHING",
+                [user.pk],
+            )
+        client = Client.objects.get(pk=user.pk)
+
+    # 5) Tratar start_date
+    start_date = data.get('start_date')
+    if start_date:
+        start_date = parse_datetime(start_date)
+        if start_date is None:
+            return Response({'message': 'start_date inválida.'}, status=400)
+    else:
+        start_date = timezone.now()
+
+    # 6) Criar viagem
     try:
         trip = Trip.objects.create(
-            client_id=data['client_id'],
+            client=client,
             driver_id=data.get('driver_id'),
             taxi_id=data.get('taxi_id'),
             shift_id=data.get('shift_id'),
-            start_date=data.get('start_date'),
+            start_date=start_date,
             end_date=data.get('end_date'),
             start_location=data['start_location'],
             end_location=data['end_location'],
-            n_people=data['n_people'],
+            n_people=n_people,
             n_kms=data.get('n_kms'),
             price=data.get('price'),
+            nivel_conforto=data.get('nivel_conforto', 'Standard'),
             status_trip=data.get('status_trip', 'pending'),
         )
     except IntegrityError as e:
@@ -135,6 +176,9 @@ def gerir_trip(request, id_trip):
 
     if 'taxi_id' in data:
         trip.taxi_id = data['taxi_id']
+
+    if 'nivel_conforto' in data:
+        trip.nivel_conforto = data['nivel_conforto']
 
     if 'shift_id' in data:
         trip.shift_id = data['shift_id']

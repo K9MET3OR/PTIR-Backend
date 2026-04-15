@@ -95,6 +95,13 @@ def create_user(request):
         address  = address,
     )
 
+    if role == 'cliente':
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "INSERT INTO clients (user_id) VALUES (%s) ON CONFLICT (user_id) DO NOTHING",
+                [user.id],
+            )
+
     return Response({
         'success': True,
         'user': {
