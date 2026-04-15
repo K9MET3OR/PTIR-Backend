@@ -1,4 +1,5 @@
 import re
+import secrets
 from datetime import date, datetime, timezone, timedelta
 
 import bcrypt
@@ -20,14 +21,17 @@ def motorista_para_json(motorista):
         'id': str(motorista.id),
         'username': motorista.username,
         'email': motorista.email,
-        'name': motorista.name,
+        'nome': motorista.name,
         'role': motorista.role,
         'nif': motorista.nif,
+        'telefone': motorista.mobile or '',
         'ano_nascimento': motorista.ano_nascimento,
         'genero': motorista.genero,
-        'num_carta_conducao': motorista.num_carta_conducao,
+        'n_carta': motorista.num_carta_conducao,
+        'validade_carta': str(motorista.validade_carta) if motorista.validade_carta else '',
         'localidade': motorista.localidade,
         'codigo_postal': motorista.codigo_postal,
+        'estado': motorista.estado,
     }
 
 # ---------------------------------------------------------------------------
@@ -136,52 +140,75 @@ def _validate_num_carta(num_carta: str):
 def registo_motorista(request):
     data = request.data
 
-    # --- Required field presence (nif is required: it is the sole login key) ---
-    required = ('username', 'email', 'password', 'name', 'nif',
-                 'ano_nascimento', 'genero', 'num_carta_conducao', 'codigo_postal')
-    missing = [f for f in required if not data.get(f)]
-    if missing:
+    # Aceita tanto os nomes do frontend como os do backend
+    email     = str(data.get('email', '')).strip()
+    name      = str(data.get('nome') or data.get('name', '')).strip()
+    nif       = str(data.get('nif', '')).strip()
+    genero    = str(data.get('genero', '')).strip()
+    num_carta = str(data.get('n_carta') or data.get('num_carta_conducao', '')).strip()
+    telefone  = str(data.get('telefone') or data.get('mobile', '')).strip()
+    validade_carta_raw = data.get('validade_carta', '') or ''
+    codigo_postal = str(data.get('codigo_postal', '')).strip()
+
+    # username auto-gerado a partir do email se não fornecido
+    username = str(data.get('username') or email.split('@')[0]).strip()
+
+    # data_nascimento (YYYY-MM-DD) → ano_nascimento
+    data_nasc_raw = data.get('data_nascimento') or data.get('ano_nascimento', '')
+
+    # --- Validações básicas ---
+    if not email or not name or not nif or not genero or not num_carta:
         return Response(
-            {'message': f"Campos obrigatórios em falta: {', '.join(missing)}"},
+            {'message': 'Campos obrigatórios em falta: email, nome, nif, genero, n_carta'},
             status=400,
         )
 
-    username      = data['username'].strip()
-    email         = data['email'].strip()
-    password      = data['password']
-    name          = data['name'].strip()
-    nif           = str(data['nif']).strip()
-    genero        = data['genero']
-    num_carta     = data['num_carta_conducao'].strip()
-    codigo_postal = data['codigo_postal'].strip()
-
-    # --- Validate NIF (mod-11) ---
+    # --- Validate NIF ---
     if not validar_nif(nif):
         return Response({'message': 'NIF inválido.'}, status=400)
 
-    # --- Validate ano_nascimento ---
-    ano_nascimento, err = _validate_ano_nascimento(data['ano_nascimento'])
+    # --- Extrair ano de nascimento ---
+    if isinstance(data_nasc_raw, str) and '-' in data_nasc_raw:
+        try:
+            ano_nascimento_raw = int(data_nasc_raw.split('-')[0])
+        except ValueError:
+            return Response({'message': 'data_nascimento inválida.'}, status=400)
+    else:
+        ano_nascimento_raw = data_nasc_raw
+
+    ano_nascimento, err = _validate_ano_nascimento(ano_nascimento_raw)
     if err:
         return err
 
     # --- Validate genero ---
+    genero_map = {'O': 'Outro'}
+    genero = genero_map.get(genero, genero)
     if genero not in ('M', 'F', 'Outro'):
         return Response(
             {'message': "genero deve ser 'M', 'F' ou 'Outro'."},
             status=400,
         )
 
-    # --- Validate num_carta_conducao ---
-    err = _validate_num_carta(num_carta)
-    if err:
-        return err
+    # --- Validate num_carta ---
+    if not num_carta or len(num_carta) < 5:
+        return Response({'message': 'n_carta deve ter pelo menos 5 caracteres.'}, status=400)
 
-    # --- Lookup localidade via postal code API (before DB writes) ---
-    localidade, err = _lookup_localidade(codigo_postal)
-    if err:
-        return err
+    # --- Validade da carta ---
+    validade_carta = None
+    if validade_carta_raw:
+        try:
+            validade_carta = datetime.strptime(validade_carta_raw, '%Y-%m-%d').date()
+        except ValueError:
+            return Response({'message': 'validade_carta inválida. Use YYYY-MM-DD.'}, status=400)
 
-    # --- Hash password (CPU-bound; do before acquiring DB transaction) ---
+    # --- Lookup localidade (opcional) ---
+    localidade = ''
+    if codigo_postal and _CP_RE.match(codigo_postal):
+        localidade, _ = _lookup_localidade(codigo_postal)
+        localidade = localidade or ''
+
+    # --- Password aleatória (autenticação via Firebase) ---
+    password = data.get('password') or secrets.token_urlsafe(16)
     hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
 
     # --- Atomic creation with uniqueness checks inside the transaction.
@@ -204,26 +231,24 @@ def registo_motorista(request):
                     status=409,
                 )
 
-            user = User.objects.create(
+            motorista = Driver.objects.create(
                 username=username,
                 email=email,
                 password=hashed,
                 name=name,
                 role='motorista',
                 nif=nif,
-            )
-            motorista = Driver.objects.create(
-                user_ptr=user,
+                mobile=telefone,
                 ano_nascimento=ano_nascimento,
                 genero=genero,
                 num_carta_conducao=num_carta,
+                validade_carta=validade_carta,
                 localidade=localidade,
                 codigo_postal=codigo_postal,
             )
-    except IntegrityError:
-        # Concurrent request won the race on a unique column.
+    except IntegrityError as e:
         return Response(
-            {'message': 'Dados duplicados. Verifique username, email, NIF ou carta de condução.'},
+            {'message': f'Dados duplicados: {e}'},
             status=409,
         )
     except Exception:
@@ -232,25 +257,7 @@ def registo_motorista(request):
             status=500,
         )
 
-    return Response(
-        {
-            'success': True,
-            'user': {
-                'id':                  str(user.id),
-                'username':            user.username,
-                'email':               user.email,
-                'name':                user.name,
-                'role':                user.role,
-                'nif':                 user.nif,
-                'ano_nascimento':      motorista.ano_nascimento,
-                'genero':              motorista.genero,
-                'num_carta_conducao':  motorista.num_carta_conducao,
-                'localidade':          motorista.localidade,
-                'codigo_postal':       motorista.codigo_postal,
-            },
-        },
-        status=201,
-    )
+    return Response({'success': True, 'motorista': motorista_para_json(motorista)}, status=201)
 
 
 # ---------------------------------------------------------------------------
@@ -370,84 +377,84 @@ def gerir_motorista(request, id_motorista):
 
     if 'username' in data:
         username = str(data['username']).strip()
-        if username == '':
+        if not username:
             return Response({'message': 'username e obrigatorio.'}, status=400)
-
-        existe = User.objects.filter(username=username).exclude(pk=motorista.pk).exists()
-        if existe:
+        if User.objects.filter(username=username).exclude(pk=motorista.pk).exists():
             return Response({'message': 'Username ja existe.'}, status=409)
-
         motorista.username = username
 
     if 'email' in data:
         email = str(data['email']).strip()
-        if email == '':
+        if not email:
             return Response({'message': 'email e obrigatorio.'}, status=400)
-
-        existe = User.objects.filter(email=email).exclude(pk=motorista.pk).exists()
-        if existe:
+        if User.objects.filter(email=email).exclude(pk=motorista.pk).exists():
             return Response({'message': 'Email ja registado.'}, status=409)
-
         motorista.email = email
 
-    if 'name' in data:
-        name = str(data['name']).strip()
-        if name == '':
-            return Response({'message': 'name e obrigatorio.'}, status=400)
-
-        motorista.name = name
+    # aceita 'nome' (frontend) ou 'name' (backend)
+    name_val = data.get('nome') or data.get('name')
+    if name_val is not None:
+        name_val = str(name_val).strip()
+        if not name_val:
+            return Response({'message': 'nome e obrigatorio.'}, status=400)
+        motorista.name = name_val
 
     if 'nif' in data:
         nif = str(data['nif']).strip()
         if not validar_nif(nif):
             return Response({'message': 'NIF invalido.'}, status=400)
-
-        existe = User.objects.filter(nif=nif).exclude(pk=motorista.pk).exists()
-        if existe:
+        if User.objects.filter(nif=nif).exclude(pk=motorista.pk).exists():
             return Response({'message': 'NIF ja registado.'}, status=409)
-
         motorista.nif = nif
 
-    if 'ano_nascimento' in data:
-        ano_nascimento, err = _validate_ano_nascimento(data['ano_nascimento'])
+    if 'telefone' in data:
+        motorista.mobile = str(data['telefone']).strip()
+
+    # aceita 'data_nascimento' (frontend) ou 'ano_nascimento' (backend)
+    nasc_val = data.get('data_nascimento') or data.get('ano_nascimento')
+    if nasc_val is not None:
+        if isinstance(nasc_val, str) and '-' in nasc_val:
+            try:
+                nasc_val = int(nasc_val.split('-')[0])
+            except ValueError:
+                return Response({'message': 'data_nascimento invalida.'}, status=400)
+        ano_nascimento, err = _validate_ano_nascimento(nasc_val)
         if err:
             return err
-
         motorista.ano_nascimento = ano_nascimento
 
     if 'genero' in data:
         genero = str(data['genero']).strip()
+        genero = {'O': 'Outro'}.get(genero, genero)
         if genero not in ('M', 'F', 'Outro'):
-            return Response(
-                {'message': "genero deve ser 'M', 'F' ou 'Outro'."},
-                status=400,
-            )
-
+            return Response({'message': "genero deve ser 'M', 'F' ou 'Outro'."}, status=400)
         motorista.genero = genero
 
-    if 'num_carta_conducao' in data:
-        num_carta = str(data['num_carta_conducao']).strip()
-
-        err = _validate_num_carta(num_carta)
-        if err:
-            return err
-
-        existe = Driver.objects.filter(num_carta_conducao=num_carta).exclude(pk=motorista.pk).exists()
-        if existe:
-            return Response(
-                {'message': 'Numero de carta de conducao ja registado.'},
-                status=409,
-            )
-
+    # aceita 'n_carta' (frontend) ou 'num_carta_conducao' (backend)
+    carta_val = data.get('n_carta') or data.get('num_carta_conducao')
+    if carta_val is not None:
+        num_carta = str(carta_val).strip()
+        if len(num_carta) < 5:
+            return Response({'message': 'n_carta deve ter pelo menos 5 caracteres.'}, status=400)
+        if Driver.objects.filter(num_carta_conducao=num_carta).exclude(pk=motorista.pk).exists():
+            return Response({'message': 'Numero de carta de conducao ja registado.'}, status=409)
         motorista.num_carta_conducao = num_carta
+
+    if 'validade_carta' in data:
+        val = data['validade_carta']
+        if val:
+            try:
+                motorista.validade_carta = datetime.strptime(str(val), '%Y-%m-%d').date()
+            except ValueError:
+                return Response({'message': 'validade_carta invalida. Use YYYY-MM-DD.'}, status=400)
+        else:
+            motorista.validade_carta = None
 
     if 'codigo_postal' in data:
         codigo_postal = str(data['codigo_postal']).strip()
-
         localidade, err = _lookup_localidade(codigo_postal)
         if err:
             return err
-
         motorista.codigo_postal = codigo_postal
         motorista.localidade = localidade
 
@@ -463,3 +470,26 @@ def gerir_motorista(request, id_motorista):
         },
         status=200,
     )
+
+
+@api_view(['PATCH'])
+def atualizar_estado(request, id_motorista):
+    """
+    PATCH /api/motoristas/<id>/estado/
+    Body: { "estado": "disponivel" | "indisponivel" }
+    """
+    motorista = Driver.objects.filter(pk=id_motorista).first()
+    if not motorista:
+        return Response({'message': 'Motorista não encontrado.'}, status=404)
+
+    estado = request.data.get('estado', '').strip()
+    if estado not in ('disponivel', 'indisponivel'):
+        return Response(
+            {'message': "estado deve ser 'disponivel' ou 'indisponivel'."},
+            status=400,
+        )
+
+    motorista.estado = estado
+    motorista.save(update_fields=['estado'])
+
+    return Response({'success': True, 'estado': motorista.estado})
