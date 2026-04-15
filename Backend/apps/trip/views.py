@@ -10,6 +10,8 @@ from django.utils import timezone
 from apps.user.models import User
 from apps.user.client.models import Client
 from django.utils.dateparse import parse_datetime
+from apps.user.views import firebase_auth_required, get_user_from_request
+from apps.user.driver.models import Driver
 
 stripe.api_key = settings.STRIPE_SECRET_KEY if hasattr(settings, 'STRIPE_SECRET_KEY') else None
 
@@ -237,6 +239,14 @@ def accept_trip(request, pk):
     if trip.status_trip != "pending":
         return Response({"message": "Trip não está disponível para aceitar."}, status=400)
 
+    driver_id = request.data.get('driver_id')
+    if not driver_id:
+        return Response({'message': 'driver_id é obrigatório.'}, status=400)
+    
+    if not Driver.objects.filter(pk=driver_id).exists():
+        return Response({'message': 'Motorista inválido.'}, status=400)
+    
+    trip.driver_id = driver_id
     trip.status_trip = "accepted"
     trip.save()
 
