@@ -1,9 +1,13 @@
 from django.shortcuts import render
 from django.db import IntegrityError
+from django.conf import settings
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from rest_framework import status
 from .models import Trip
+import stripe
+
+stripe.api_key = settings.STRIPE_SECRET_KEY if hasattr(settings, 'STRIPE_SECRET_KEY') else None
 
 # Create your views here.
 
@@ -11,17 +15,19 @@ def trip_para_json(trip):
     return {
         'id': str(trip.id),
         'client_id': str(trip.client_id),
-        'driver_id': str(trip.driver_id),
-        'taxi_id': str(trip.taxi_id),
-        'shift_id': str(trip.shift_id),
-        'data_inicio': trip.data_inicio,
-        'data_fim': trip.data_fim,
-        'local_inicio': trip.local_inicio,
-        'local_fim': trip.local_fim,
-        'n_pessoas': trip.n_pessoas,
+        'driver_id': str(trip.driver_id) if trip.driver_id else None,
+        'taxi_id': str(trip.taxi_id) if trip.taxi_id else None,
+        'shift_id': str(trip.shift_id) if trip.shift_id else None,
+        'start_date': trip.start_date.isoformat() if trip.start_date else None,
+        'end_date': trip.end_date.isoformat() if trip.end_date else None,
+        'start_location': trip.start_location,
+        'end_location': trip.end_location,
+        'n_people': trip.n_people,
         'n_kms': str(trip.n_kms) if trip.n_kms is not None else None,
-        'preco': str(trip.preco) if trip.preco is not None else None,
-        'status_viagem': trip.status_viagem,
+        'price': str(trip.price) if trip.price is not None else None,
+        'status_trip': trip.status_trip,
+        'created_at': trip.created_at.isoformat() if trip.created_at else None,
+        'updated_at': trip.updated_at.isoformat() if trip.updated_at else None,
     }
 
 
@@ -30,14 +36,10 @@ def registar_trip(request):
     data = request.data
 
     campos_obrigatorios = [
-        'client',
-        'driver',
-        'taxi',
-        'shift',
-        'data_inicio',
-        'local_inicio',
-        'local_fim',
-        'n_pessoas',
+        'client_id',
+        'start_location',
+        'end_location',
+        'n_people',
     ]
 
     for campo in campos_obrigatorios:
@@ -46,21 +48,23 @@ def registar_trip(request):
 
     try:
         trip = Trip.objects.create(
-            client_id=data['client'],
-            driver_id=data['driver'],
-            taxi_id=data['taxi'],
-            shift_id=data['shift'],
-            data_inicio=data['data_inicio'],
-            data_fim=data.get('data_fim'),
-            local_inicio=data['local_inicio'],
-            local_fim=data['local_fim'],
-            n_pessoas=data['n_pessoas'],
+            client_id=data['client_id'],
+            driver_id=data.get('driver_id'),
+            taxi_id=data.get('taxi_id'),
+            shift_id=data.get('shift_id'),
+            start_date=data.get('start_date'),
+            end_date=data.get('end_date'),
+            start_location=data['start_location'],
+            end_location=data['end_location'],
+            n_people=data['n_people'],
             n_kms=data.get('n_kms'),
-            preco=data.get('preco'),
-            status_viagem=data.get('status_viagem', 'pending'),
+            price=data.get('price'),
+            status_trip=data.get('status_trip', 'pending'),
         )
-    except IntegrityError:
-        return Response({'message': 'Erro ao registar trip.'}, status=409)
+    except IntegrityError as e:
+        return Response({'message': f'Erro ao registar trip: {str(e)}'}, status=409)
+    except Exception as e:
+        return Response({'message': f'Erro: {str(e)}'}, status=400)
 
     return Response(
         {
@@ -73,7 +77,7 @@ def registar_trip(request):
 
 @api_view(['GET'])
 def listar_trips(request):
-    trips = Trip.objects.all().order_by('-data_inicio')
+    trips = Trip.objects.all().order_by('-start_date')
 
     resultado = []
     for trip in trips:
@@ -123,52 +127,52 @@ def gerir_trip(request, id_trip):
     if not data:
         return Response({'message': 'Nenhum campo para atualizar.'}, status=400)
 
-    if 'client' in data:
-        trip.client_id = data['client']
+    if 'client_id' in data:
+        trip.client_id = data['client_id']
 
-    if 'driver' in data:
-        trip.driver_id = data['driver']
+    if 'driver_id' in data:
+        trip.driver_id = data['driver_id']
 
-    if 'taxi' in data:
-        trip.taxi_id = data['taxi']
+    if 'taxi_id' in data:
+        trip.taxi_id = data['taxi_id']
 
-    if 'shift' in data:
-        trip.shift_id = data['shift']
+    if 'shift_id' in data:
+        trip.shift_id = data['shift_id']
 
-    if 'data_inicio' in data:
-        trip.data_inicio = data['data_inicio']
+    if 'start_date' in data:
+        trip.start_date = data['start_date']
 
-    if 'data_fim' in data:
-        trip.data_fim = data['data_fim']
+    if 'end_date' in data:
+        trip.end_date = data['end_date']
 
-    if 'local_inicio' in data:
-        local_inicio = str(data['local_inicio']).strip()
-        if local_inicio == '':
-            return Response({'message': 'local_inicio é obrigatório.'}, status=400)
-        trip.local_inicio = local_inicio
+    if 'start_location' in data:
+        start_location = str(data['start_location']).strip()
+        if start_location == '':
+            return Response({'message': 'start_location é obrigatório.'}, status=400)
+        trip.start_location = start_location
 
-    if 'local_fim' in data:
-        local_fim = str(data['local_fim']).strip()
-        if local_fim == '':
-            return Response({'message': 'local_fim é obrigatório.'}, status=400)
-        trip.local_fim = local_fim
+    if 'end_location' in data:
+        end_location = str(data['end_location']).strip()
+        if end_location == '':
+            return Response({'message': 'end_location é obrigatório.'}, status=400)
+        trip.end_location = end_location
 
-    if 'n_pessoas' in data:
-        trip.n_pessoas = data['n_pessoas']
+    if 'n_people' in data:
+        trip.n_people = data['n_people']
 
     if 'n_kms' in data:
         trip.n_kms = data['n_kms']
 
-    if 'preco' in data:
-        trip.preco = data['preco']
+    if 'price' in data:
+        trip.price = data['price']
 
-    if 'status_viagem' in data:
-        trip.status_viagem = data['status_viagem']
+    if 'status_trip' in data:
+        trip.status_trip = data['status_trip']
 
     try:
         trip.save()
-    except IntegrityError:
-        return Response({'message': 'Erro ao atualizar trip.'}, status=409)
+    except IntegrityError as e:
+        return Response({'message': f'Erro ao atualizar trip: {str(e)}'}, status=409)
 
     return Response(
         {
@@ -184,15 +188,19 @@ def accept_trip(request, pk):
     try:
         trip = Trip.objects.get(pk=pk)
     except Trip.DoesNotExist:
-        return Response(status=404)
+        return Response({'message': 'Trip não encontrada.'}, status=404)
 
-    if trip.status_viagem != "pending":
-        return Response({"error": "Trip not available"}, status=400)
+    if trip.status_trip != "pending":
+        return Response({"message": "Trip não está disponível para aceitar."}, status=400)
 
-    trip.status_viagem = "accepted"
+    trip.status_trip = "accepted"
     trip.save()
 
-    return Response({"message": "Trip accepted"})
+    return Response({
+        "success": True,
+        "message": "Trip aceita com sucesso",
+        "trip": trip_para_json(trip)
+    }, status=200)
 
 
 @api_view(['POST'])
@@ -200,9 +208,182 @@ def finish_trip(request, pk):
     try:
         trip = Trip.objects.get(pk=pk)
     except Trip.DoesNotExist:
-        return Response(status=404)
+        return Response({'message': 'Trip não encontrada.'}, status=404)
 
-    trip.status_viagem = "finished"
+    trip.status_trip = "finished"
     trip.save()
 
-    return Response({"message": "Trip finished"})
+    return Response({
+        "success": True,
+        "message": "Trip finalizada com sucesso",
+        "trip": trip_para_json(trip)
+    }, status=200)
+
+
+@api_view(['POST'])
+def reject_trip(request, pk):
+    try:
+        trip = Trip.objects.get(pk=pk)
+    except Trip.DoesNotExist:
+        return Response({'message': 'Trip não encontrada.'}, status=404)
+
+    if trip.status_trip != "pending":
+        return Response({"message": "Trip não está disponível para rejeitar."}, status=400)
+
+    trip.status_trip = "cancelled"
+    trip.save()
+
+    return Response({
+        "success": True,
+        "message": "Trip rejeitada com sucesso",
+        "trip": trip_para_json(trip)
+    }, status=200)
+
+
+# ---------------------------------------------------------------------------
+# Pagamentos com Stripe
+# ---------------------------------------------------------------------------
+
+
+@api_view(['POST'])
+def criar_pagamento(request):
+    """
+    Cria uma intenção de pagamento Stripe para uma viagem.
+    
+    Body esperado:
+    {
+        "amount": 2500,      # em centavos (25.00 EUR)
+        "trip_id": "uuid-da-viagem",
+        "description": "Viagem de Uber"  # opcional
+    }
+    """
+    if not stripe.api_key:
+        return Response(
+            {'message': 'Stripe não está configurado no servidor'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    
+    data = request.data or {}
+    amount = data.get('amount')
+    trip_id = data.get('trip_id')
+    description = data.get('description', 'Pagamento de Viagem')
+    
+    # Validar campos obrigatórios
+    if not amount or not trip_id:
+        return Response(
+            {'message': 'amount e trip_id são obrigatórios'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    
+    # Validar que a viagem existe
+    try:
+        trip = Trip.objects.get(pk=trip_id)
+    except Trip.DoesNotExist:
+        return Response(
+            {'message': 'Viagem não encontrada'},
+            status=status.HTTP_404_NOT_FOUND
+        )
+    
+    # Validar amount
+    try:
+        amount_int = int(amount)
+        if amount_int <= 0:
+            raise ValueError()
+    except (ValueError, TypeError):
+        return Response(
+            {'message': 'amount deve ser um número positivo em centavos'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    
+    try:
+        # Criar payment intent no Stripe
+        intent = stripe.PaymentIntent.create(
+            amount=amount_int,
+            currency='eur',
+            description=description,
+            metadata={
+                'trip_id': str(trip_id),
+                'client_id': str(trip.client_id)
+            }
+        )
+        
+        return Response({
+            'success': True,
+            'client_secret': intent.client_secret,
+            'payment_intent_id': intent.id,
+            'amount': amount_int,
+            'currency': 'eur'
+        }, status=status.HTTP_200_OK)
+        
+    except stripe.error.StripeError as e:
+        return Response(
+            {'message': f'Erro Stripe: {str(e)}'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    except Exception as e:
+        return Response(
+            {'message': f'Erro ao processar pagamento: {str(e)}'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['POST'])
+def confirmar_pagamento(request):
+    """
+    Confirma o pagamento e atualiza o status da viagem.
+    
+    Body esperado:
+    {
+        "payment_intent_id": "pi_xxxxx",
+        "trip_id": "uuid-da-viagem"
+    }
+    """
+    if not stripe.api_key:
+        return Response(
+            {'message': 'Stripe não está configurado no servidor'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    
+    data = request.data or {}
+    payment_intent_id = data.get('payment_intent_id')
+    trip_id = data.get('trip_id')
+    
+    if not payment_intent_id or not trip_id:
+        return Response(
+            {'message': 'payment_intent_id e trip_id são obrigatórios'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    
+    try:
+        # Verificar o status do payment intent no Stripe
+        intent = stripe.PaymentIntent.retrieve(payment_intent_id)
+        
+        if intent.status == 'succeeded':
+            # Atualizar o status da viagem
+            try:
+                trip = Trip.objects.get(pk=trip_id)
+                trip.status_trip = 'finished'
+                trip.save()
+                
+                return Response({
+                    'success': True,
+                    'message': 'Pagamento confirmado com sucesso',
+                    'trip': trip_para_json(trip)
+                }, status=status.HTTP_200_OK)
+                
+            except Trip.DoesNotExist:
+                return Response(
+                    {'message': 'Viagem não encontrada'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+        else:
+            return Response(
+                {'message': f'Pagamento não foi confirmado. Status: {intent.status}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+    except stripe.error.StripeError as e:
+        return Response(
+            {'message': f'Erro ao verificar pagamento: {str(e)}'},
+            status=status.HTTP_400_BAD_REQUEST
+        )

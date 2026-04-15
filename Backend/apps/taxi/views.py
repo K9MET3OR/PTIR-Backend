@@ -175,6 +175,7 @@ def _normalize_create_body(data):
         'marca': marca[:50],
         'tipo_motor': _MOTOR_CANON.get(motor, 'Gasolina'),
         'nivel_conforto': _NIVEL_CANON.get(nivel, 'Conforto'),
+        'estado': 'disponivel',  # Novos táxis começam sempre disponíveis
     }, None
 
 
