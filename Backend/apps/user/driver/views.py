@@ -164,7 +164,7 @@ def registo_motorista(request):
         )
 
     # --- Validate NIF ---
-    if not validar_nif(nif):
+    if not re.fullmatch(r'^[123456789]\d{8}$', nif):
         return Response({'message': 'NIF inválido.'}, status=400)
 
     # --- Extrair ano de nascimento ---
@@ -374,6 +374,8 @@ def gerir_motorista(request, id_motorista):
 
     if not data:
         return Response({'message': 'Nenhum campo para atualizar.'}, status=400)
+    
+    novo_estado = None
 
     if 'username' in data:
         username = str(data['username']).strip()
@@ -401,7 +403,7 @@ def gerir_motorista(request, id_motorista):
 
     if 'nif' in data:
         nif = str(data['nif']).strip()
-        if not validar_nif(nif):
+        if not re.fullmatch(r'^[123456789]\d{8}$', nif):
             return Response({'message': 'NIF invalido.'}, status=400)
         if User.objects.filter(nif=nif).exclude(pk=motorista.pk).exists():
             return Response({'message': 'NIF ja registado.'}, status=409)
@@ -458,18 +460,33 @@ def gerir_motorista(request, id_motorista):
         motorista.codigo_postal = codigo_postal
         motorista.localidade = localidade
 
-    try:
-        motorista.save()
-    except IntegrityError:
-        return Response({'message': 'Erro ao atualizar motorista.'}, status=409)
+    if 'estado' in data:
+        estado = str(data['estado']).strip()
+        if estado not in ('disponivel', 'indisponivel'):
+            return Response(
+                {'message': "estado deve ser 'disponivel' ou 'indisponivel'."},
+                status=400,
+            )
+        motorista.estado = estado
+        novo_estado = estado
 
-    return Response(
-        {
-            'success': True,
-            'motorista': motorista_para_json(motorista),
-        },
-        status=200,
-    )
+        try:
+            motorista.save()
+
+            if novo_estado is not None:
+                Driver.objects.filter(pk=motorista.pk).update(estado=novo_estado)
+                motorista.refresh_from_db()
+
+        except IntegrityError:
+            return Response({'message': 'Erro ao atualizar motorista.'}, status=409)
+        
+        return Response(
+            {
+                'success': True,
+                'motorista': motorista_para_json(motorista),
+            },
+            status=200,
+        )
 
 
 @api_view(['PATCH'])
@@ -492,4 +509,10 @@ def atualizar_estado(request, id_motorista):
     motorista.estado = estado
     motorista.save(update_fields=['estado'])
 
-    return Response({'success': True, 'estado': motorista.estado})
+    return Response(
+            {
+                'success': True,
+                'motorista': motorista_para_json(motorista),
+            },
+            status=200,
+        )
