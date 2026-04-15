@@ -7,13 +7,6 @@ from apps.user.models import User
 
 SEED_USERS = [
     {
-        'email':    'gestor@gestor.com',
-        'password': '123456',
-        'username': 'gestor',
-        'name':     'Gestor Teste',
-        'role':     'gestor',
-    },
-    {
         'email':    'admin@admin.com',
         'password': '123456',
         'username': 'admin',
@@ -42,15 +35,19 @@ class Command(BaseCommand):
 
     def handle(self, *args, **kwargs):
         for u in SEED_USERS:
-            # Verificar se já existe na DB
-            if User.objects.filter(email=u['email']).exists():
-                self.stdout.write(f"  [skip] {u['email']} já existe na DB")
-                continue
-
             # Criar ou reutilizar no Firebase
             try:
                 fb_user = auth.get_user_by_email(u['email'])
                 self.stdout.write(f"  [firebase] {u['email']} já existe no Firebase")
+                # Atualizar a senha para garantir que corresponde
+                try:
+                    auth.update_user(
+                        fb_user.uid,
+                        password=u['password'],
+                    )
+                    self.stdout.write(f"  [firebase] senha atualizada para {u['email']}")
+                except Exception as e:
+                    self.stdout.write(f"  [firebase] erro ao atualizar senha: {e}")
             except auth.UserNotFoundError:
                 fb_user = auth.create_user(
                     email=u['email'],
@@ -58,6 +55,16 @@ class Command(BaseCommand):
                     display_name=u['name'],
                 )
                 self.stdout.write(f"  [firebase] {u['email']} criado")
+
+            # Verificar se já existe na DB
+            existing_user = User.objects.filter(email=u['email']).first()
+            if existing_user:
+                # Atualizar UID se necessário
+                if existing_user.uid != fb_user.uid:
+                    existing_user.uid = fb_user.uid
+                    existing_user.save()
+                self.stdout.write(f"  [skip] {u['email']} já existe na DB")
+                continue
 
             # Criar na DB
             User.objects.create(

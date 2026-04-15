@@ -31,11 +31,8 @@ services:
     ports:
       - "8000:8000"
     environment:
-<<<<<<< HEAD
       - STRIPE_PUBLIC_KEY=pk_test_51TMBBhPXiqFPh33KyIbsOZ8RsfHSKetZUlDw5TcJGplqiu1CCbj3j6juXYlw8q1I6URGhRQYxq0WVPngtdDPBUJT001RIElCvc
       - STRIPE_SECRET_KEY=sk_test_51TMBBhPXiqFPh33KIxYKzdqGJV84NXZXOS03l5ZZQRnfW7EwVpM43cOUXH619ntjUGVkfxrorw1wemOYkQwxtOMs00LeexEL26
-=======
->>>>>>> 0796e1801988747f1e405605aa5bfaca0941b2f5
       - DB_HOST=db
     depends_on:
       db:
