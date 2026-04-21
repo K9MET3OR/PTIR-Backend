@@ -16,9 +16,8 @@ class PricingService:
     
     # Multiplicadores de conforto
     COMFORT_MULTIPLIERS = {
-        "Standard": Decimal("1.00"),
-        "Conforto": Decimal("1.30"),
-        "Premium": Decimal("1.80"),
+        "Básico": Decimal("1.00"),
+        "Luxuoso": Decimal("1.50"),
     }
     
     @classmethod
@@ -29,7 +28,7 @@ class PricingService:
         Args:
             distance_km: Distância em quilómetros
             duration_minutes: Duração estimada em minutos
-            comfort_level: Nível de conforto ('Standard', 'Conforto', 'Premium')
+            comfort_level: Nível de conforto ('Básico', 'Luxuoso')
             
         Returns:
             dict com:
@@ -78,8 +77,8 @@ class PricingService:
     
     @classmethod
     def validate_price_example(cls):
-        """Validar que 12,2 km = 7,96€ para Standard. Usado para testes."""
-        result = cls.calculate_price(distance_km=12.2, duration_minutes=20, comfort_level="Standard")
+        """Validar que 12,2 km = 7,96€ para Básico. Usado para testes."""
+        result = cls.calculate_price(distance_km=12.2, duration_minutes=20, comfort_level="Básico")
         expected = 7.96
         actual = result["price"]
         

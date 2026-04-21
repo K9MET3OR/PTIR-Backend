@@ -13,15 +13,12 @@ from rest_framework.response import Response
 from .models import Taxi
 
 _NIVEL_CANON = {
-    'standard': 'Standard',
-    'conforto': 'Conforto',
-    'premium': 'Premium',
+    'básico': 'Básico',
+    'luxuoso': 'Luxuoso',
 }
 _MOTOR_CANON = {
-    'gasolina': 'Gasolina',
-    'diesel': 'Diesel',
+    'combustão': 'Combustão',
     'elétrico': 'Elétrico',
-    'híbrido': 'Híbrido',
 }
 _NIVEL_VALIDOS = frozenset(_NIVEL_CANON.keys())
 _MOTOR_VALIDOS = frozenset(_MOTOR_CANON.keys())
@@ -142,12 +139,12 @@ def validate_taxi_payload(data):
     if 'tipo_motor' in data and data.get('tipo_motor') not in (None, ''):
         tm = str(data['tipo_motor']).strip().lower()
         if tm not in _MOTOR_VALIDOS:
-            return "tipo_motor deve ser 'Gasolina', 'Diesel', 'Elétrico' ou 'Híbrido'."
+            return "tipo_motor deve ser 'Combustão' ou 'Elétrico'."
 
     if 'nivel_conforto' in data and data.get('nivel_conforto') not in (None, ''):
         nv = str(data['nivel_conforto']).strip().lower()
         if nv not in _NIVEL_VALIDOS:
-            return "nivel_conforto deve ser 'Standard', 'Conforto' ou 'Premium'."
+            return "nivel_conforto deve ser 'Básico' ou 'Luxuoso'."
 
     return None
 
@@ -427,7 +424,7 @@ def registo_taxi(request):
 
 @api_view(['GET'])
 def listar_taxis(request):
-    taxis = list(Taxi.objects.all().order_by('matricula'))
+    taxis = list(Taxi.objects.all().order_by('-created_at'))
     return Response(
         {
             'success': True,
