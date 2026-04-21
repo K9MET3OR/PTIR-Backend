@@ -26,3 +26,21 @@ def validar_nif(nif: str) -> bool:
     expected_check = 0 if remainder < 2 else 11 - remainder
 
     return digits[8] == expected_check
+
+
+def validar_senha(senha: str) -> bool:
+    """
+    Validates a password according to requirements.
+    
+    Rules:
+      - Minimum 6 characters
+      - Must contain at least one digit
+      - Must contain at least one letter
+    """
+    if not senha or len(senha) < 6:
+        return False
+    
+    has_digit = bool(re.search(r'\d', senha))
+    has_letter = bool(re.search(r'[a-zA-Z]', senha))
+    
+    return has_digit and has_letter

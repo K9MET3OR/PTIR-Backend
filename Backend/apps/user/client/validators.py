@@ -1,4 +1,4 @@
-from apps.user.utils import validar_nif
+from apps.user.utils import validar_nif, validar_senha
 
 
 def validate_client_payload(data):
@@ -10,5 +10,9 @@ def validate_client_payload(data):
     nif = str(data.get('nif', '')).strip()
     if not validar_nif(nif):
         return 'NIF invalido.'
+
+    password = data.get('password', '')
+    if not validar_senha(password):
+        return 'Palavra-passe deve conter dígitos e letras, mínimo 6 caracteres.'
 
     return None

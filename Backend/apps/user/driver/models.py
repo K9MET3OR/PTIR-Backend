@@ -6,7 +6,6 @@ class Driver(User):
     GENERO_CHOICES = [
         ('M', 'Masculino'),
         ('F', 'Feminino'),
-        ('Outro', 'Outro'),
     ]
 
     ESTADO_CHOICES = [

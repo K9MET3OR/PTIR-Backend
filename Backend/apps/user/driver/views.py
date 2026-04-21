@@ -1,6 +1,7 @@
 import re
 import secrets
 from datetime import date, datetime, timezone, timedelta
+import logging
 
 import bcrypt
 import jwt
@@ -13,6 +14,9 @@ from rest_framework.response import Response
 from apps.user.models import User
 from apps.user.utils import validar_nif
 from .models import Driver
+from .validators import validate_driver_registration_payload
+
+logger = logging.getLogger(__name__)
 
 
 
@@ -46,7 +50,10 @@ def _lookup_localidade(codigo_postal: str):
     Consulta a API de códigos postais e devolve a localidade.
     Retorna (localidade: str, error_response | None).
     """
+    logger.debug(f"_lookup_localidade called with: {codigo_postal}")
+    
     if not _CP_RE.match(codigo_postal):
+        logger.debug(f"Invalid format for codigo_postal: {codigo_postal}")
         return None, Response(
             {'message': 'Formato de código postal inválido. Use XXXX-XXX.'},
             status=400,
@@ -54,16 +61,20 @@ def _lookup_localidade(codigo_postal: str):
 
     cp4, cp3 = codigo_postal.split('-')
     url = f"{settings.POSTAL_CODE_API_URL}/{cp4}/{cp3}"
+    logger.debug(f"Calling postal code API: {url}")
 
     try:
         resp = requests.get(url, timeout=5)
-    except requests.RequestException:
+        logger.debug(f"API response status: {resp.status_code}")
+    except requests.RequestException as e:
+        logger.error(f"RequestException: {e}")
         return None, Response(
             {'message': 'Serviço de códigos postais indisponível.'},
             status=502,
         )
 
     if resp.status_code != 200:
+        logger.debug(f"API returned non-200 status: {resp.status_code}")
         return None, Response(
             {'message': 'Código postal não encontrado.'},
             status=400,
@@ -71,25 +82,32 @@ def _lookup_localidade(codigo_postal: str):
 
     try:
         data = resp.json()
-    except ValueError:
+        logger.debug(f"API response data: {data}")
+    except ValueError as e:
+        logger.error(f"Failed to parse API response: {e}")
         return None, Response(
             {'message': 'Resposta inválida do serviço de códigos postais.'},
             status=502,
         )
 
     if not data:
+        logger.debug("API returned empty data")
         return None, Response(
             {'message': 'Código postal não encontrado.'},
             status=400,
         )
 
     localidade = data[0].get('Localidade', '').strip()
+    logger.debug(f"Extracted localidade: {localidade}")
+    
     if not localidade:
+        logger.debug("Localidade is empty")
         return None, Response(
             {'message': 'Código postal não encontrado.'},
             status=400,
         )
 
+    logger.debug(f"Success - returning localidade: {localidade}")
     return localidade, None
 
 
@@ -133,12 +151,41 @@ def _validate_num_carta(num_carta: str):
 
 
 # ---------------------------------------------------------------------------
+# GET /motorista/localidade/<codigo_postal>/
+# Endpoint para lookup de localidade (auto-preenchimento do formulário)
+# ---------------------------------------------------------------------------
+
+@api_view(['GET'])
+def get_localidade(request, codigo_postal):
+    """
+    Retorna a localidade para um código postal válido.
+    Formato esperado: XXXX-XXX (ex: 1234-567)
+    """
+    logger.debug(f"get_localidade called with codigo_postal: {codigo_postal}")
+    localidade, err = _lookup_localidade(codigo_postal)
+    if err:
+        logger.debug(f"Error from _lookup_localidade: {err}")
+        return err
+    
+    logger.debug(f"Localidade found: {localidade}")
+    return Response(
+        {'localidade': localidade},
+        status=200,
+    )
+
+
+# ---------------------------------------------------------------------------
 # View
 # ---------------------------------------------------------------------------
 
 @api_view(['POST'])
 def registo_motorista(request):
     data = request.data
+
+    # --- Validar payload ---
+    err = validate_driver_registration_payload(data)
+    if err:
+        return Response({'message': err}, status=400)
 
     # Aceita tanto os nomes do frontend como os do backend
     email     = str(data.get('email', '')).strip()
@@ -163,10 +210,6 @@ def registo_motorista(request):
             status=400,
         )
 
-    # --- Validate NIF ---
-    if not re.fullmatch(r'^[123456789]\d{8}$', nif):
-        return Response({'message': 'NIF inválido.'}, status=400)
-
     # --- Extrair ano de nascimento ---
     if isinstance(data_nasc_raw, str) and '-' in data_nasc_raw:
         try:
@@ -181,11 +224,9 @@ def registo_motorista(request):
         return err
 
     # --- Validate genero ---
-    genero_map = {'O': 'Outro'}
-    genero = genero_map.get(genero, genero)
-    if genero not in ('M', 'F', 'Outro'):
+    if genero not in ('M', 'F'):
         return Response(
-            {'message': "genero deve ser 'M', 'F' ou 'Outro'."},
+            {'message': "genero deve ser 'M' ou 'F'."},
             status=400,
         )
 
@@ -325,7 +366,7 @@ def login_nif(request):
 
 @api_view(['GET'])
 def listar_motoristas(request):
-    motoristas = Driver.objects.all().order_by('name')
+    motoristas = Driver.objects.all().order_by('-created_at')
 
     resultado = []
     for motorista in motoristas:
