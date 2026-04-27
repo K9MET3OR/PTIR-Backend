@@ -18,11 +18,47 @@ stripe.api_key = settings.STRIPE_SECRET_KEY if hasattr(settings, 'STRIPE_SECRET_
 # Create your views here.
 
 def trip_para_json(trip):
+    # Obter nome do motorista se existir
+    driver_name = None
+    if trip.driver_id:
+        try:
+            # Driver herda de User, então pk é igual a user_id
+            driver = Driver.objects.get(pk=trip.driver_id)
+            # Obter o nome a partir do atributo 'name' do User
+            driver_name = driver.name or "Motorista"
+        except Exception as e:
+            print(f"Erro ao obter driver: {e}")
+            driver_name = "Motorista"
+    
+    # Obter matrícula do táxi se existir
+    taxi_matricula = None
+    taxi_id = trip.taxi_id
+    
+    # Se o táxi não está diretamente atribuído, tentar obter do shift
+    if not taxi_id and trip.shift_id:
+        try:
+            from apps.shift.models import Shift
+            shift = Shift.objects.get(pk=trip.shift_id)
+            taxi_id = shift.taxi_id
+        except Exception as e:
+            print(f"Erro ao obter shift: {e}")
+    
+    if taxi_id:
+        try:
+            from apps.taxi.models import Taxi
+            taxi = Taxi.objects.get(pk=taxi_id)
+            taxi_matricula = taxi.matricula
+        except Exception as e:
+            print(f"Erro ao obter taxi: {e}")
+            taxi_matricula = "N/A"
+    
     return {
         'id': str(trip.id),
         'client_id': str(trip.client_id),
         'driver_id': str(trip.driver_id) if trip.driver_id else None,
-        'taxi_id': str(trip.taxi_id) if trip.taxi_id else None,
+        'driver_name': driver_name,
+        'taxi_id': str(taxi_id) if taxi_id else None,
+        'taxi_matricula': taxi_matricula,
         'shift_id': str(trip.shift_id) if trip.shift_id else None,
         'start_date': trip.start_date.isoformat() if trip.start_date else None,
         'end_date': trip.end_date.isoformat() if trip.end_date else None,
@@ -248,6 +284,25 @@ def accept_trip(request, pk):
     
     trip.driver_id = driver_id
     trip.status_trip = "accepted"
+    
+    # Tentar atribuir o shift ativo do motorista (se existir)
+    try:
+        from apps.shift.models import Shift
+        from django.utils import timezone
+        
+        # Buscar shift ativo do motorista
+        active_shift = Shift.objects.filter(
+            driver_id=driver_id,
+            status_shift='active',
+            end_date__isnull=True
+        ).first()
+        
+        if active_shift:
+            trip.shift_id = active_shift.id
+            trip.taxi_id = active_shift.taxi_id
+    except Exception as e:
+        print(f"Erro ao atribuir shift: {e}")
+    
     trip.save()
 
     return Response({

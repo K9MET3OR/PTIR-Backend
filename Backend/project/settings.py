@@ -74,8 +74,10 @@ JWT_SECRET = os.environ.get('JWT_SECRET', SECRET_KEY)
 JWT_EXPIRY_HOURS = int(os.environ.get('JWT_EXPIRY_HOURS', 24))
 
 # Stripe Configuration
+import stripe
 STRIPE_PUBLIC_KEY = os.environ.get('STRIPE_PUBLIC_KEY', '')
 STRIPE_SECRET_KEY = os.environ.get('STRIPE_SECRET_KEY', '')
+stripe.api_key = STRIPE_SECRET_KEY
 
 DATABASES = {
     'default': {
