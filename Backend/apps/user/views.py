@@ -1,6 +1,7 @@
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from functools import wraps
+from django.db import connection
 
 from .models import User
 
