@@ -1,706 +1,443 @@
-from __future__ import annotations
-
-from datetime import date
-from decimal import Decimal, InvalidOperation
-from math import atan2, cos, radians, sin, sqrt
-from uuid import UUID
-
-from django.db import IntegrityError, transaction
-from rest_framework import status
+﻿from django.shortcuts import render
+from django.db import IntegrityError, connection
+from django.conf import settings
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
+from rest_framework import status
+from .models import Trip
+import stripe
+from django.utils import timezone
+from apps.user.models import User
+from apps.user.client.models import Client
+from django.utils.dateparse import parse_datetime
+from apps.user.views import firebase_auth_required, get_user_from_request
+from apps.user.driver.models import Driver
 
-from .models import Taxi
+stripe.api_key = settings.STRIPE_SECRET_KEY if hasattr(settings, 'STRIPE_SECRET_KEY') else None
 
-_NIVEL_CANON = {
-    'básico': 'Básico',
-    'luxuoso': 'Luxuoso',
-}
-_MOTOR_CANON = {
-    'combustão': 'Combustão',
-    'elétrico': 'Elétrico',
-}
-_NIVEL_VALIDOS = frozenset(_NIVEL_CANON.keys())
-_MOTOR_VALIDOS = frozenset(_MOTOR_CANON.keys())
-_TAXI_UPDATE_FIELDS = frozenset(('modelo', 'matricula', 'ano_compra', 'consumo_medio', 'marca', 'tipo_motor', 'nivel_conforto', 'estado', 'latitude', 'longitude'))
-_ESTADO_VALIDOS = frozenset(('disponivel', 'indisponivel', 'ocupado'))
+# Create your views here.
 
-# ---------------------------------------------------------------------------
-# Helpers — serialização
-# ---------------------------------------------------------------------------
-
-
-def _taxi_to_dict(taxi: Taxi) -> dict:
-    tipo_motor_raw = str(taxi.tipo_motor or '').strip()
-    nivel_raw = str(taxi.nivel_conforto or '').strip()
-    tipo_motor = _MOTOR_CANON.get(tipo_motor_raw.lower(), tipo_motor_raw)
-    nivel_conforto = _NIVEL_CANON.get(nivel_raw.lower(), nivel_raw)
-
+def trip_para_json(trip):
     return {
-        'id': str(taxi.id),
-        'id_taxi': str(taxi.id),
-        'modelo': taxi.modelo,
-        'matricula': taxi.matricula,
-        'ano_compra': taxi.ano_compra,
-        'consumo_medio': float(taxi.consumo_medio),
-        'marca': taxi.marca or '',
-        'tipo_motor': tipo_motor,
-        'nivel_conforto': nivel_conforto,
-        'estado': taxi.estado,
-        'latitude': float(taxi.latitude) if taxi.latitude is not None else None,
-        'longitude': float(taxi.longitude) if taxi.longitude is not None else None,
-        'created_at': taxi.created_at.isoformat() if taxi.created_at else None,
-        'updated_at': taxi.updated_at.isoformat() if taxi.updated_at else None,
+        'id': str(trip.id),
+        'client_id': str(trip.client_id),
+        'driver_id': str(trip.driver_id) if trip.driver_id else None,
+        'taxi_id': str(trip.taxi_id) if trip.taxi_id else None,
+        'shift_id': str(trip.shift_id) if trip.shift_id else None,
+        'start_date': trip.start_date.isoformat() if trip.start_date else None,
+        'end_date': trip.end_date.isoformat() if trip.end_date else None,
+        'start_location': trip.start_location,
+        'end_location': trip.end_location,
+        'n_people': trip.n_people,
+        'nivel_conforto': trip.nivel_conforto,
+        'n_kms': str(trip.n_kms) if trip.n_kms is not None else None,
+        'price': str(trip.price) if trip.price is not None else None,
+        'status_trip': trip.status_trip,
+        'created_at': trip.created_at.isoformat() if trip.created_at else None,
+        'updated_at': trip.updated_at.isoformat() if trip.updated_at else None,
     }
 
-
-# ---------------------------------------------------------------------------
-# Helpers — validação (criação)
-# ---------------------------------------------------------------------------
-
-
-def _parse_ano_compra(raw):
-    try:
-        return int(raw)
-    except (TypeError, ValueError):
-        return None
-
-
-def _parse_consumo_medio(raw):
-    try:
-        value = Decimal(str(raw))
-    except (InvalidOperation, TypeError, ValueError):
-        return None
-    if value <= 0:
-        return None
-    return value
-
-
-def _parse_coordinate(raw, name):
-    try:
-        value = float(raw)
-    except (TypeError, ValueError):
-        return None, f"{name} deve ser um numero valido."
-    return value, None
-
-
-def _haversine_km(lat1, lon1, lat2, lon2):
-    # Distancia geodesica aproximada (km) entre dois pontos GPS.
-    earth_radius_km = 6371.0
-    dlat = radians(lat2 - lat1)
-    dlon = radians(lon2 - lon1)
-    a = sin(dlat / 2) ** 2 + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlon / 2) ** 2
-    c = 2 * atan2(sqrt(a), sqrt(1 - a))
-    return earth_radius_km * c
-
-
-def validate_taxi_payload(data):
-    """
-    Valida o corpo para POST / registo.
-    Devolve mensagem de erro ou None se estiver correto.
-    """
-    required = ('modelo', 'matricula', 'ano_compra', 'consumo_medio')
-    missing = []
-    for field in required:
-        if field not in data:
-            missing.append(field)
-            continue
-        value = data.get(field)
-        if value in (None, ''):
-            missing.append(field)
-    if missing:
-        return f"Campos obrigatorios em falta: {', '.join(missing)}"
-
-    modelo = str(data.get('modelo', '')).strip()
-    if len(modelo) < 2:
-        return 'modelo deve ter pelo menos 2 caracteres.'
-
-    matricula = str(data.get('matricula', '')).strip().upper()
-    if len(matricula) < 5:
-        return 'matricula invalida.'
-
-    ano = _parse_ano_compra(data.get('ano_compra'))
-    if ano is None:
-        return 'ano_compra deve ser um numero inteiro.'
-
-    ano_atual = date.today().year
-    if ano < 1980 or ano > ano_atual:
-        return f'ano_compra deve estar entre 1980 e {ano_atual}.'
-
-    consumo = _parse_consumo_medio(data.get('consumo_medio'))
-    if consumo is None:
-        return 'consumo_medio deve ser um numero maior que 0.'
-
-    if 'marca' in data and data.get('marca') not in (None, ''):
-        marca = str(data['marca']).strip()
-        if len(marca) > 50:
-            return 'marca demasiado longa.'
-
-    if 'tipo_motor' in data and data.get('tipo_motor') not in (None, ''):
-        tm = str(data['tipo_motor']).strip().lower()
-        if tm not in _MOTOR_VALIDOS:
-            return "tipo_motor deve ser 'Combustão' ou 'Elétrico'."
-
-    if 'nivel_conforto' in data and data.get('nivel_conforto') not in (None, ''):
-        nv = str(data['nivel_conforto']).strip().lower()
-        if nv not in _NIVEL_VALIDOS:
-            return "nivel_conforto deve ser 'Básico' ou 'Luxuoso'."
-
-    return None
-
-
-def _normalize_create_body(data):
-    err = validate_taxi_payload(data)
-    if err:
-        return None, err
-
-    marca = str(data.get('marca', '')).strip() if data.get('marca') is not None else ''
-    motor = (str(data.get('tipo_motor', 'gasolina')).strip().lower()
-             if data.get('tipo_motor') not in (None, '') else 'gasolina')
-    if motor not in _MOTOR_VALIDOS:
-        motor = 'gasolina'
-    nivel = (str(data.get('nivel_conforto', 'conforto')).strip().lower()
-             if data.get('nivel_conforto') not in (None, '') else 'conforto')
-    if nivel not in _NIVEL_VALIDOS:
-        nivel = 'conforto'
-
-    return {
-        'modelo': str(data['modelo']).strip(),
-        'matricula': str(data['matricula']).strip().upper(),
-        'ano_compra': int(data['ano_compra']),
-        'consumo_medio': _parse_consumo_medio(data['consumo_medio']),
-        'marca': marca[:50],
-        'tipo_motor': _MOTOR_CANON.get(motor, 'Gasolina'),
-        'nivel_conforto': _NIVEL_CANON.get(nivel, 'Conforto'),
-        'estado': 'disponivel',  # Novos táxis começam sempre disponíveis
-    }, None
-
-
-# ---------------------------------------------------------------------------
-# Helpers — validação (atualização parcial)
-# ---------------------------------------------------------------------------
-
-
-def validate_taxi_update_payload(data):
-    """Valida apenas os campos enviados num PATCH/PUT."""
-    if not data:
-        return 'Nenhum campo para atualizar.'
-
-    if not _TAXI_UPDATE_FIELDS.intersection(data.keys()):
-        return 'Nenhum campo para atualizar.'
-
-    if 'modelo' in data:
-        modelo = str(data['modelo']).strip()
-        if len(modelo) < 2:
-            return 'modelo deve ter pelo menos 2 caracteres.'
-
-    if 'matricula' in data:
-        matricula = str(data['matricula']).strip().upper()
-        if len(matricula) < 5:
-            return 'matricula invalida.'
-
-    if 'ano_compra' in data:
-        ano = _parse_ano_compra(data.get('ano_compra'))
-        if ano is None:
-            return 'ano_compra deve ser um numero inteiro.'
-        ano_atual = date.today().year
-        if ano < 1980 or ano > ano_atual:
-            return f'ano_compra deve estar entre 1980 e {ano_atual}.'
-
-    if 'consumo_medio' in data:
-        consumo = _parse_consumo_medio(data.get('consumo_medio'))
-        if consumo is None:
-            return 'consumo_medio deve ser um numero maior que 0.'
-
-    if 'marca' in data and data['marca'] is not None:
-        marca = str(data['marca']).strip()
-        if len(marca) > 50:
-            return 'marca demasiado longa.'
-
-    if 'tipo_motor' in data and data['tipo_motor'] not in (None, ''):
-        tm = str(data['tipo_motor']).strip().lower()
-        if tm not in _MOTOR_VALIDOS:
-            return "tipo_motor deve ser 'Gasolina', 'Diesel', 'Elétrico' ou 'Híbrido'."
-
-    if 'nivel_conforto' in data and data['nivel_conforto'] not in (None, ''):
-        nv = str(data['nivel_conforto']).strip().lower()
-        if nv not in _NIVEL_VALIDOS:
-            return "nivel_conforto deve ser 'Standard', 'Conforto' ou 'Premium'."
-
-    if 'estado' in data and data['estado'] not in (None, ''):
-        estado = str(data['estado']).strip().lower()
-        if estado not in _ESTADO_VALIDOS:
-            return "estado deve ser 'disponivel', 'indisponivel' ou 'ocupado'."
-
-    if 'latitude' in data and data['latitude'] is not None:
-        lat, err = _parse_coordinate(data['latitude'], 'latitude')
-        if err or not (-90 <= lat <= 90):
-            return 'latitude deve estar entre -90 e 90.'
-
-    if 'longitude' in data and data['longitude'] is not None:
-        lng, err = _parse_coordinate(data['longitude'], 'longitude')
-        if err or not (-180 <= lng <= 180):
-            return 'longitude deve estar entre -180 e 180.'
-
-    return None
-
-
-def _apply_taxi_updates(taxi: Taxi, data: dict) -> None:
-    if 'modelo' in data:
-        taxi.modelo = str(data['modelo']).strip()
-    if 'matricula' in data:
-        taxi.matricula = str(data['matricula']).strip().upper()
-    if 'ano_compra' in data:
-        taxi.ano_compra = int(data['ano_compra'])
-    if 'consumo_medio' in data:
-        consumo = _parse_consumo_medio(data.get('consumo_medio'))
-        if consumo is not None:
-            taxi.consumo_medio = consumo
-    if 'marca' in data:
-        taxi.marca = str(data['marca']).strip()[:50] if data['marca'] is not None else ''
-    if 'tipo_motor' in data and data['tipo_motor'] not in (None, ''):
-        tm = str(data['tipo_motor']).strip().lower()
-        taxi.tipo_motor = _MOTOR_CANON.get(tm, taxi.tipo_motor)
-    if 'nivel_conforto' in data and data['nivel_conforto'] not in (None, ''):
-        nv = str(data['nivel_conforto']).strip().lower()
-        taxi.nivel_conforto = _NIVEL_CANON.get(nv, taxi.nivel_conforto)
-    if 'estado' in data and data['estado'] not in (None, ''):
-        estado = str(data['estado']).strip().lower()
-        if estado in _ESTADO_VALIDOS:
-            taxi.estado = estado
-    if 'latitude' in data:
-        if data['latitude'] is not None:
-            lat, _ = _parse_coordinate(data['latitude'], 'latitude')
-            taxi.latitude = lat
-        else:
-            taxi.latitude = None
-    if 'longitude' in data:
-        if data['longitude'] is not None:
-            lng, _ = _parse_coordinate(data['longitude'], 'longitude')
-            taxi.longitude = lng
-        else:
-            taxi.longitude = None
-
-
-def _get_taxi_or_response(id_taxi):
-    try:
-        uid = id_taxi if isinstance(id_taxi, UUID) else UUID(str(id_taxi))
-    except (ValueError, TypeError):
-        return None, Response({'message': 'id_taxi invalido.'}, status=status.HTTP_400_BAD_REQUEST)
-    try:
-        return Taxi.objects.get(pk=uid), None
-    except Taxi.DoesNotExist:
-        return None, Response({'message': 'Taxi nao encontrado.'}, status=status.HTTP_404_NOT_FOUND)
-
-
-def _apagar_taxi_instance(taxi: Taxi) -> Response:
-    """Apaga um registo Taxi já carregado."""
-    pk = str(taxi.id)
-    taxi.delete()
-    return Response(
-        {'success': True, 'message': 'Taxi apagado.', 'id_taxi': pk},
-        status=status.HTTP_200_OK,
-    )
-
-
-def _apagar_taxi_por_id(id_taxi) -> Response:
-    """Resolve UUID, carrega o taxi e apaga (rota dedicada `apagar_taxi`)."""
-    taxi, err_resp = _get_taxi_or_response(id_taxi)
-    if err_resp:
-        return err_resp
-    assert taxi is not None
-    return _apagar_taxi_instance(taxi)
-
-
-def _consumo_para_calculo(data):
-    """
-    Resolve consumo_medio para o calculo:
-    - se vier consumo_medio no payload, usa esse valor;
-    - caso contrario, tenta obter por id_taxi.
-    """
-    consumo_payload = data.get('consumo_medio')
-    if consumo_payload not in (None, ''):
-        consumo = _parse_consumo_medio(consumo_payload)
-        if consumo is None:
-            return None, Response(
-                {'message': 'consumo_medio deve ser um numero maior que 0.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        return consumo, None
-
-    id_taxi = data.get('id_taxi')
-    if id_taxi in (None, ''):
-        return None, Response(
-            {'message': 'Envia consumo_medio ou id_taxi para calcular o valor da viagem.'},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
-
-    taxi, err_resp = _get_taxi_or_response(id_taxi)
-    if err_resp:
-        return None, err_resp
-    assert taxi is not None
-    return taxi.consumo_medio, None
-
-
-# ---------------------------------------------------------------------------
-# Helpers — Gestão de Estado e Localização
-# ---------------------------------------------------------------------------
-
-
-def _marcar_taxi_disponivel(taxi: Taxi) -> None:
-    """Marca o taxi como disponível."""
-    taxi.estado = 'disponivel'
-    taxi.save()
-
-
-def _marcar_taxi_indisponivel(taxi: Taxi) -> None:
-    """Marca o taxi como indisponível."""
-    taxi.estado = 'indisponivel'
-    taxi.save()
-
-
-def _marcar_taxi_ocupado(taxi: Taxi) -> None:
-    """Marca o taxi como ocupado."""
-    taxi.estado = 'ocupado'
-    taxi.save()
-
-
-def _taxi_is_disponivel(taxi: Taxi) -> bool:
-    """Verifica se o taxi está disponível."""
-    return taxi.estado == 'disponivel'
-
-
-def _taxi_is_indisponivel(taxi: Taxi) -> bool:
-    """Verifica se o taxi está indisponível."""
-    return taxi.estado == 'indisponivel'
-
-
-def _taxi_is_ocupado(taxi: Taxi) -> bool:
-    """Verifica se o taxi está ocupado."""
-    return taxi.estado == 'ocupado'
-
-
-def _atualizar_localizacao_taxi(taxi: Taxi, latitude: float, longitude: float) -> None:
-    """Atualiza a localização (coordenadas GPS) do taxi."""
-    taxi.latitude = latitude
-    taxi.longitude = longitude
-    taxi.save()
-
-
-def _taxi_tem_localizacao(taxi: Taxi) -> bool:
-    """Verifica se o taxi tem coordenadas registadas."""
-    return taxi.latitude is not None and taxi.longitude is not None
-
-
-def _taxi_get_localizacao(taxi: Taxi) -> tuple | None:
-    """Retorna as coordenadas do taxi como tuplo (latitude, longitude)."""
-    if _taxi_tem_localizacao(taxi):
-        return (float(taxi.latitude), float(taxi.longitude))
-    return None
-
-
-# ---------------------------------------------------------------------------
-# Views — CRUD
-# ---------------------------------------------------------------------------
-
-
 @api_view(['POST'])
-def registo_taxi(request):
-    body, err = _normalize_create_body(request.data)
-    if err:
-        return Response({'message': err}, status=status.HTTP_400_BAD_REQUEST)
+def registar_trip(request):
+    data = request.data
 
+    campos_obrigatorios = [
+        'client_id',
+        'start_location',
+        'end_location',
+        'n_people',
+    ]
+
+    # 1) Validar campos obrigat├│rios
+    for campo in campos_obrigatorios:
+        if campo not in data or str(data[campo]).strip() == '':
+            return Response({'message': f'{campo} ├® obrigat├│rio.'}, status=400)
+
+    # 2) Validar n├║mero de pessoas
     try:
-        with transaction.atomic():
-            taxi = Taxi.objects.create(**body)
-    except IntegrityError:
-        return Response({'message': 'Matricula ja registada.'}, status=status.HTTP_409_CONFLICT)
+        n_people = int(data['n_people'])
+    except (TypeError, ValueError):
+        return Response({'message': 'n_people inv├ílido.'}, status=400)
+
+    if n_people < 1 or n_people > 4:
+        return Response({'message': 'n_people deve estar entre 1 e 4.'}, status=400)
+
+    # 3) Obter utilizador cliente
+    try:
+        user = User.objects.get(pk=data['client_id'], role='cliente')
+    except User.DoesNotExist:
+        return Response({'message': 'Cliente inv├ílido.'}, status=400)
+
+    # 4) Garantir que existe registo na tabela Client
+    client = Client.objects.filter(pk=user.pk).first()
+    if not client:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "INSERT INTO clients (user_id) VALUES (%s) ON CONFLICT (user_id) DO NOTHING",
+                [user.pk],
+            )
+        client = Client.objects.get(pk=user.pk)
+
+    # 5) Tratar start_date
+    start_date = data.get('start_date')
+    if start_date:
+        start_date = parse_datetime(start_date)
+        if start_date is None:
+            return Response({'message': 'start_date inv├ílida.'}, status=400)
+    else:
+        start_date = timezone.now()
+
+    # 6) Criar viagem
+    try:
+        trip = Trip.objects.create(
+            client=client,
+            driver_id=data.get('driver_id'),
+            taxi_id=data.get('taxi_id'),
+            shift_id=data.get('shift_id'),
+            start_date=start_date,
+            end_date=data.get('end_date'),
+            start_location=data['start_location'],
+            end_location=data['end_location'],
+            n_people=n_people,
+            n_kms=data.get('n_kms'),
+            price=data.get('price'),
+            nivel_conforto=data.get('nivel_conforto', 'Standard'),
+            status_trip=data.get('status_trip', 'pending'),
+        )
+    except IntegrityError as e:
+        return Response({'message': f'Erro ao registar trip: {str(e)}'}, status=409)
+    except Exception as e:
+        return Response({'message': f'Erro: {str(e)}'}, status=400)
 
     return Response(
-        {'success': True, 'taxi': _taxi_to_dict(taxi)},
-        status=status.HTTP_201_CREATED,
+        {
+            'success': True,
+            'trip': trip_para_json(trip),
+        },
+        status=201,
     )
 
 
 @api_view(['GET'])
-def listar_taxis(request):
-    taxis = list(Taxi.objects.all().order_by('-created_at'))
+def listar_trips(request):
+    trips = Trip.objects.all().order_by('-start_date')
+
+    resultado = []
+    for trip in trips:
+        resultado.append(trip_para_json(trip))
+
     return Response(
         {
             'success': True,
-            'taxis': [_taxi_to_dict(t) for t in taxis],
-            'total': len(taxis),
+            'trips': resultado,
+            'total': len(resultado),
         },
-        status=status.HTTP_200_OK,
+        status=200,
     )
 
 
 @api_view(['GET', 'PATCH', 'PUT', 'DELETE'])
-def gerir_taxi(request, id_taxi):
-    taxi, err_resp = _get_taxi_or_response(id_taxi)
-    if err_resp:
-        return err_resp
+def gerir_trip(request, id_trip):
+    trip = Trip.objects.filter(pk=id_trip).first()
 
-    assert taxi is not None
+    if not trip:
+        return Response({'message': 'Trip n├úo encontrada.'}, status=404)
 
     if request.method == 'GET':
-        return Response({'success': True, 'taxi': _taxi_to_dict(taxi)}, status=status.HTTP_200_OK)
+        return Response(
+            {
+                'success': True,
+                'trip': trip_para_json(trip),
+            },
+            status=200,
+        )
 
     if request.method == 'DELETE':
-        return _apagar_taxi_instance(taxi)
+        trip_id = str(trip.id)
+        trip.delete()
 
-    # PATCH / PUT
+        return Response(
+            {
+                'success': True,
+                'message': 'Trip apagada.',
+                'id': trip_id,
+            },
+            status=200,
+        )
+
     data = request.data
-    err = validate_taxi_update_payload(data)
-    if err:
-        return Response({'message': err}, status=status.HTTP_400_BAD_REQUEST)
+
+    if not data:
+        return Response({'message': 'Nenhum campo para atualizar.'}, status=400)
+
+    if 'client_id' in data:
+        trip.client_id = data['client_id']
+
+    if 'driver_id' in data:
+        trip.driver_id = data['driver_id']
+
+    if 'taxi_id' in data:
+        trip.taxi_id = data['taxi_id']
+
+    if 'nivel_conforto' in data:
+        trip.nivel_conforto = data['nivel_conforto']
+
+    if 'shift_id' in data:
+        trip.shift_id = data['shift_id']
+
+    if 'start_date' in data:
+        trip.start_date = data['start_date']
+
+    if 'end_date' in data:
+        trip.end_date = data['end_date']
+
+    if 'start_location' in data:
+        start_location = str(data['start_location']).strip()
+        if start_location == '':
+            return Response({'message': 'start_location ├® obrigat├│rio.'}, status=400)
+        trip.start_location = start_location
+
+    if 'end_location' in data:
+        end_location = str(data['end_location']).strip()
+        if end_location == '':
+            return Response({'message': 'end_location ├® obrigat├│rio.'}, status=400)
+        trip.end_location = end_location
+
+    if 'n_people' in data:
+        trip.n_people = data['n_people']
+
+    if 'n_kms' in data:
+        trip.n_kms = data['n_kms']
+
+    if 'price' in data:
+        trip.price = data['price']
+
+    if 'status_trip' in data:
+        trip.status_trip = data['status_trip']
 
     try:
-        with transaction.atomic():
-            _apply_taxi_updates(taxi, data)
-            taxi.save()
-    except IntegrityError:
-        return Response({'message': 'Matricula ja registada.'}, status=status.HTTP_409_CONFLICT)
+        trip.save()
+    except IntegrityError as e:
+        return Response({'message': f'Erro ao atualizar trip: {str(e)}'}, status=409)
 
-    taxi.refresh_from_db()
-    return Response({'success': True, 'taxi': _taxi_to_dict(taxi)}, status=status.HTTP_200_OK)
-
-
-@api_view(['DELETE'])
-def apagar_taxi(request, id_taxi):
-    """DELETE explícito: mesmo comportamento que DELETE em `gerir_taxi` (mesmo UUID)."""
-    return _apagar_taxi_por_id(id_taxi)
+    return Response(
+        {
+            'success': True,
+            'trip': trip_para_json(trip),
+        },
+        status=200,
+    )
 
 
 @api_view(['POST'])
-def calcular_valor_viagem(request):
-    """
-    Calcula o valor estimado da viagem com base em:
-    - coordenadas de inicio/fim
-    - consumo medio (payload ou id_taxi)
+def accept_trip(request, pk):
+    try:
+        trip = Trip.objects.get(pk=pk)
+    except Trip.DoesNotExist:
+        return Response({'message': 'Trip n├úo encontrada.'}, status=404)
 
-    Body esperado:
-      {
-        "inicio": {"lat": 40.64, "lng": -8.65},
-        "fim": {"lat": 40.63, "lng": -8.64},
-        "consumo_medio": 6.2,   # opcional se enviar id_taxi
-        "id_taxi": "...",      # opcional se enviar consumo_medio
-        "preco_combustivel": 1.80  # opcional (default 1.80 EUR/L)
-      }
-    """
-    data = request.data or {}
-    inicio = data.get('inicio') or {}
-    fim = data.get('fim') or {}
+    if trip.status_trip != "pending":
+        return Response({"message": "Trip n├úo est├í dispon├¡vel para aceitar."}, status=400)
 
-    lat_ini, err = _parse_coordinate(inicio.get('lat'), 'inicio.lat')
-    if err:
-        return Response({'message': err}, status=status.HTTP_400_BAD_REQUEST)
-    lng_ini, err = _parse_coordinate(inicio.get('lng'), 'inicio.lng')
-    if err:
-        return Response({'message': err}, status=status.HTTP_400_BAD_REQUEST)
-    lat_fim, err = _parse_coordinate(fim.get('lat'), 'fim.lat')
-    if err:
-        return Response({'message': err}, status=status.HTTP_400_BAD_REQUEST)
-    lng_fim, err = _parse_coordinate(fim.get('lng'), 'fim.lng')
-    if err:
-        return Response({'message': err}, status=status.HTTP_400_BAD_REQUEST)
+    driver_id = request.data.get('driver_id')
+    if not driver_id:
+        return Response({'message': 'driver_id ├® obrigat├│rio.'}, status=400)
+    
+    if not Driver.objects.filter(pk=driver_id).exists():
+        return Response({'message': 'Motorista inv├ílido.'}, status=400)
+    
+    trip.driver_id = driver_id
+    trip.status_trip = "accepted"
+    trip.save()
 
-    if not (-90 <= lat_ini <= 90 and -90 <= lat_fim <= 90):
-        return Response({'message': 'Latitude deve estar entre -90 e 90.'}, status=status.HTTP_400_BAD_REQUEST)
-    if not (-180 <= lng_ini <= 180 and -180 <= lng_fim <= 180):
-        return Response({'message': 'Longitude deve estar entre -180 e 180.'}, status=status.HTTP_400_BAD_REQUEST)
+    return Response({
+        "success": True,
+        "message": "Trip aceita com sucesso",
+        "trip": trip_para_json(trip)
+    }, status=200)
 
-    consumo_medio, consumo_err = _consumo_para_calculo(data)
-    if consumo_err:
-        return consumo_err
-
-    preco_combustivel = _parse_consumo_medio(data.get('preco_combustivel', 1.80))
-    if preco_combustivel is None:
-        return Response({'message': 'preco_combustivel deve ser maior que 0.'}, status=status.HTTP_400_BAD_REQUEST)
-
-    distancia_km = Decimal(str(_haversine_km(lat_ini, lng_ini, lat_fim, lng_fim)))
-    litros_estimados = (distancia_km * Decimal(consumo_medio)) / Decimal('100')
-    custo_estimado = litros_estimados * Decimal(preco_combustivel)
-
-    return Response(
-        {
-            'success': True,
-            'distancia_km': round(float(distancia_km), 3),
-            'consumo_medio_l_100km': round(float(consumo_medio), 2),
-            'litros_estimados': round(float(litros_estimados), 3),
-            'preco_combustivel_eur_l': round(float(preco_combustivel), 3),
-            'valor_estimado_eur': round(float(custo_estimado), 2),
-        },
-        status=status.HTTP_200_OK,
-    )
-
-
-# ---------------------------------------------------------------------------
-# Views — Gestão de Estado e Localização
-# ---------------------------------------------------------------------------
-
-
-@api_view(['PATCH', 'PUT', 'POST'])
-def atualizar_estado_taxi(request, id_taxi):
-    """
-    Atualiza o estado do taxi.
-
-    Body esperado:
-      {
-        "estado": "disponivel"  # ou "indisponivel" / "ocupado"
-      }
-
-    Também suporta os métodos de conveniência:
-      - POST /taxi/{id}/estado com "action": "disponivel" etc.
-    """
-    taxi, err_resp = _get_taxi_or_response(id_taxi)
-    if err_resp:
-        return err_resp
-
-    assert taxi is not None
-
-    data = request.data or {}
-    estado = data.get('estado') or data.get('action')
-
-    if not estado:
-        return Response(
-            {'message': 'Campo "estado" ou "action" é obrigatório.'},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
-
-    estado = str(estado).strip().lower()
-    if estado not in _ESTADO_VALIDOS:
-        return Response(
-            {'message': f"Estado deve ser um de: {', '.join(_ESTADO_VALIDOS)}"},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
-
-    taxi.estado = estado
-    taxi.save()
-    taxi.refresh_from_db()
-
-    return Response(
-        {
-            'success': True,
-            'message': f'Estado do taxi atualizado para: {estado}',
-            'taxi': _taxi_to_dict(taxi),
-        },
-        status=status.HTTP_200_OK,
-    )
-
-
-@api_view(['PATCH', 'PUT', 'POST'])
-def atualizar_localizacao_taxi(request, id_taxi):
-    """
-    Atualiza a localização (coordenadas GPS) do taxi.
-
-    Body esperado:
-      {
-        "latitude": 40.6366,
-        "longitude": -8.6538
-      }
-    """
-    taxi, err_resp = _get_taxi_or_response(id_taxi)
-    if err_resp:
-        return err_resp
-
-    assert taxi is not None
-
-    data = request.data or {}
-    latitude = data.get('latitude')
-    longitude = data.get('longitude')
-
-    if latitude is None or longitude is None:
-        return Response(
-            {'message': 'Campos "latitude" e "longitude" são obrigatórios.'},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
-
-    lat, lat_err = _parse_coordinate(latitude, 'latitude')
-    if lat_err:
-        return Response({'message': lat_err}, status=status.HTTP_400_BAD_REQUEST)
-
-    lng, lng_err = _parse_coordinate(longitude, 'longitude')
-    if lng_err:
-        return Response({'message': lng_err}, status=status.HTTP_400_BAD_REQUEST)
-
-    if not (-90 <= lat <= 90):
-        return Response(
-            {'message': 'Latitude deve estar entre -90 e 90.'},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
-
-    if not (-180 <= lng <= 180):
-        return Response(
-            {'message': 'Longitude deve estar entre -180 e 180.'},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
-
-    _atualizar_localizacao_taxi(taxi, lat, lng)
-    taxi.refresh_from_db()
-
-    return Response(
-        {
-            'success': True,
-            'message': 'Localização do taxi atualizada.',
-            'taxi': _taxi_to_dict(taxi),
-        },
-        status=status.HTTP_200_OK,
-    )
-
-
-# ---------------------------------------------------------------------------
-# Views — Pricing (algoritmo com multiplier de conforto)
-# ---------------------------------------------------------------------------
 
 @api_view(['POST'])
-def calcular_preco_com_conforto(request):
+def finish_trip(request, pk):
+    try:
+        trip = Trip.objects.get(pk=pk)
+    except Trip.DoesNotExist:
+        return Response({'message': 'Trip n├úo encontrada.'}, status=404)
+
+    trip.status_trip = "finished"
+    trip.save()
+
+    return Response({
+        "success": True,
+        "message": "Trip finalizada com sucesso",
+        "trip": trip_para_json(trip)
+    }, status=200)
+
+
+@api_view(['POST'])
+def reject_trip(request, pk):
+    try:
+        trip = Trip.objects.get(pk=pk)
+    except Trip.DoesNotExist:
+        return Response({'message': 'Trip n├úo encontrada.'}, status=404)
+
+    if trip.status_trip != "pending":
+        return Response({"message": "Trip n├úo est├í dispon├¡vel para rejeitar."}, status=400)
+
+    trip.status_trip = "cancelled"
+    trip.save()
+
+    return Response({
+        "success": True,
+        "message": "Trip rejeitada com sucesso",
+        "trip": trip_para_json(trip)
+    }, status=200)
+
+
+# ---------------------------------------------------------------------------
+# Pagamentos com Stripe
+# ---------------------------------------------------------------------------
+
+
+@api_view(['POST'])
+def criar_pagamento(request):
     """
-    Calcula o preço da viagem usando o algoritmo dinâmico com multiplicador de conforto.
-    
-    Este endpoint é simples e rápido para usar no frontend.
+    Cria uma inten├º├úo de pagamento Stripe para uma viagem.
     
     Body esperado:
-      {
-        "distancia_km": 12.2,
-        "duracao_minutos": 20,
-        "nivel_conforto": "Standard"  # ou "Conforto", "Premium"
-      }
-    
-    Response:
-      {
-        "success": true,
-        "price": 7.96,
-        "comfort_level": "Standard",
-        "breakdown": { ... }
-      }
+    {
+        "amount": 2500,      # em centavos (25.00 EUR)
+        "trip_id": "uuid-da-viagem",
+        "description": "Viagem de Uber"  # opcional
+    }
     """
-    from .pricing_service import PricingService
+    if not stripe.api_key:
+        return Response(
+            {'message': 'Stripe n├úo est├í configurado no servidor'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
     
     data = request.data or {}
+    amount = data.get('amount')
+    trip_id = data.get('trip_id')
+    description = data.get('description', 'Pagamento de Viagem')
+    
+    # Validar campos obrigat├│rios
+    if not amount or not trip_id:
+        return Response(
+            {'message': 'amount e trip_id s├úo obrigat├│rios'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    
+    # Validar que a viagem existe
+    try:
+        trip = Trip.objects.get(pk=trip_id)
+    except Trip.DoesNotExist:
+        return Response(
+            {'message': 'Viagem n├úo encontrada'},
+            status=status.HTTP_404_NOT_FOUND
+        )
+    
+    # Validar amount
+    try:
+        amount_int = int(amount)
+        if amount_int <= 0:
+            raise ValueError()
+    except (ValueError, TypeError):
+        return Response(
+            {'message': 'amount deve ser um n├║mero positivo em centavos'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
     
     try:
-        distancia_km = float(data.get('distancia_km', 0))
-        duracao_minutos = int(data.get('duracao_minutos', 0))
-        nivel_conforto = str(data.get('nivel_conforto', 'Standard')).strip()
-    except (TypeError, ValueError):
+        # Criar payment intent no Stripe
+        intent = stripe.PaymentIntent.create(
+            amount=amount_int,
+            currency='eur',
+            description=description,
+            metadata={
+                'trip_id': str(trip_id),
+                'client_id': str(trip.client_id)
+            }
+        )
+        
+        return Response({
+            'success': True,
+            'client_secret': intent.client_secret,
+            'payment_intent_id': intent.id,
+            'amount': amount_int,
+            'currency': 'eur'
+        }, status=status.HTTP_200_OK)
+        
+    except stripe.error.StripeError as e:
         return Response(
-            {'message': 'distancia_km (float), duracao_minutos (int) e nivel_conforto (string) são obrigatórios.'},
-            status=status.HTTP_400_BAD_REQUEST,
+            {'message': f'Erro Stripe: {str(e)}'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    except Exception as e:
+        return Response(
+            {'message': f'Erro ao processar pagamento: {str(e)}'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['POST'])
+def confirmar_pagamento(request):
+    """
+    Confirma o pagamento e atualiza o status da viagem.
+    
+    Body esperado:
+    {
+        "payment_intent_id": "pi_xxxxx",
+        "trip_id": "uuid-da-viagem"
+    }
+    """
+    if not stripe.api_key:
+        return Response(
+            {'message': 'Stripe n├úo est├í configurado no servidor'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    
+    data = request.data or {}
+    payment_intent_id = data.get('payment_intent_id')
+    trip_id = data.get('trip_id')
+    
+    if not payment_intent_id or not trip_id:
+        return Response(
+            {'message': 'payment_intent_id e trip_id s├úo obrigat├│rios'},
+            status=status.HTTP_400_BAD_REQUEST
         )
     
     try:
-        result = PricingService.calculate_price_by_distance(
-            distance_km=distancia_km,
-            duration_minutes=duracao_minutos,
-            comfort_level=nivel_conforto
-        )
+        # Verificar o status do payment intent no Stripe
+        intent = stripe.PaymentIntent.retrieve(payment_intent_id)
+        
+        if intent.status == 'succeeded':
+            # Atualizar o status da viagem
+            try:
+                trip = Trip.objects.get(pk=trip_id)
+                trip.status_trip = 'finished'
+                trip.save()
+                
+                return Response({
+                    'success': True,
+                    'message': 'Pagamento confirmado com sucesso',
+                    'trip': trip_para_json(trip)
+                }, status=status.HTTP_200_OK)
+                
+            except Trip.DoesNotExist:
+                return Response(
+                    {'message': 'Viagem n├úo encontrada'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+        else:
+            return Response(
+                {'message': f'Pagamento n├úo foi confirmado. Status: {intent.status}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+    except stripe.error.StripeError as e:
         return Response(
-            {'success': True, **result},
-            status=status.HTTP_200_OK,
-        )
-    except ValueError as e:
-        return Response(
-            {'message': str(e)},
-            status=status.HTTP_400_BAD_REQUEST,
+            {'message': f'Erro ao verificar pagamento: {str(e)}'},
+            status=status.HTTP_400_BAD_REQUEST
         )
