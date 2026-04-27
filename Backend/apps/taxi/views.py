@@ -690,7 +690,7 @@ def calcular_preco_com_conforto(request):
         )
     
     try:
-        result = PricingService.calculate_price(
+        result = PricingService.calculate_price_by_distance(
             distance_km=distancia_km,
             duration_minutes=duracao_minutos,
             comfort_level=nivel_conforto

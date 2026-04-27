@@ -81,3 +81,54 @@ class PricingService:
                 day += 1
             current += timedelta(minutes=1)
         return day, night
+
+    @classmethod
+    def calculate_price_by_distance(cls, distance_km: float, duration_minutes: int, comfort_level: str) -> dict:
+        """
+        Calcula o preço de uma viagem por distância e duração.
+        
+        Args:
+            distance_km: Distância em quilômetros
+            duration_minutes: Duração em minutos
+            comfort_level: 'Básico' ou 'Luxuoso'
+        Returns:
+            dict com preço final e breakdown
+        """
+        from datetime import datetime, timedelta
+        
+        if comfort_level not in cls.PRICE_PER_MINUTE:
+            raise ValueError(f"Nível de conforto inválido: {comfort_level}")
+        if distance_km <= 0:
+            raise ValueError("Distância inválida")
+        if duration_minutes <= 0:
+            raise ValueError("Duração inválida")
+
+        # Usar datetime atual para calcular acréscimo noturno
+        now = datetime.now()
+        start_dt = now
+        end_dt = now + timedelta(minutes=duration_minutes)
+
+        # Conta minutos diurnos e noturnos
+        day_minutes, night_minutes = cls._split_day_night_minutes(start_dt, end_dt)
+        price_per_minute = cls.PRICE_PER_MINUTE[comfort_level]
+        night_surcharge = cls.NIGHT_SURCHARGE
+
+        price_day = Decimal(day_minutes) * price_per_minute
+        price_night = Decimal(night_minutes) * price_per_minute * (Decimal("1.0") + night_surcharge)
+        total_price = price_day + price_night
+        total_price = total_price.quantize(Decimal("0.01"))
+
+        return {
+            "price": float(total_price),
+            "breakdown": {
+                "distance_km": distance_km,
+                "duration_minutes": duration_minutes,
+                "day_minutes": day_minutes,
+                "night_minutes": night_minutes,
+                "price_per_minute": float(price_per_minute),
+                "night_surcharge": float(night_surcharge),
+                "price_day": float(price_day),
+                "price_night": float(price_night),
+            },
+            "comfort_level": comfort_level,
+        }

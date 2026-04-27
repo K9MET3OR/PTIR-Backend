@@ -1,4 +1,4 @@
-from django.shortcuts import render
+﻿from django.shortcuts import render
 from django.db import IntegrityError, connection
 from django.conf import settings
 from rest_framework.decorators import api_view
@@ -84,16 +84,16 @@ def registar_trip(request):
         'n_people',
     ]
 
-    # 1) Validar campos obrigatórios
+    # 1) Validar campos obrigat├│rios
     for campo in campos_obrigatorios:
         if campo not in data or str(data[campo]).strip() == '':
-            return Response({'message': f'{campo} é obrigatório.'}, status=400)
+            return Response({'message': f'{campo} ├® obrigat├│rio.'}, status=400)
 
-    # 2) Validar número de pessoas
+    # 2) Validar n├║mero de pessoas
     try:
         n_people = int(data['n_people'])
     except (TypeError, ValueError):
-        return Response({'message': 'n_people inválido.'}, status=400)
+        return Response({'message': 'n_people inv├ílido.'}, status=400)
 
     if n_people < 1 or n_people > 4:
         return Response({'message': 'n_people deve estar entre 1 e 4.'}, status=400)
@@ -102,7 +102,7 @@ def registar_trip(request):
     try:
         user = User.objects.get(pk=data['client_id'], role='cliente')
     except User.DoesNotExist:
-        return Response({'message': 'Cliente inválido.'}, status=400)
+        return Response({'message': 'Cliente inv├ílido.'}, status=400)
 
     # 4) Garantir que existe registo na tabela Client
     client = Client.objects.filter(pk=user.pk).first()
@@ -119,7 +119,7 @@ def registar_trip(request):
     if start_date:
         start_date = parse_datetime(start_date)
         if start_date is None:
-            return Response({'message': 'start_date inválida.'}, status=400)
+            return Response({'message': 'start_date inv├ílida.'}, status=400)
     else:
         start_date = timezone.now()
 
@@ -177,7 +177,7 @@ def gerir_trip(request, id_trip):
     trip = Trip.objects.filter(pk=id_trip).first()
 
     if not trip:
-        return Response({'message': 'Trip não encontrada.'}, status=404)
+        return Response({'message': 'Trip n├úo encontrada.'}, status=404)
 
     if request.method == 'GET':
         return Response(
@@ -230,13 +230,13 @@ def gerir_trip(request, id_trip):
     if 'start_location' in data:
         start_location = str(data['start_location']).strip()
         if start_location == '':
-            return Response({'message': 'start_location é obrigatório.'}, status=400)
+            return Response({'message': 'start_location ├® obrigat├│rio.'}, status=400)
         trip.start_location = start_location
 
     if 'end_location' in data:
         end_location = str(data['end_location']).strip()
         if end_location == '':
-            return Response({'message': 'end_location é obrigatório.'}, status=400)
+            return Response({'message': 'end_location ├® obrigat├│rio.'}, status=400)
         trip.end_location = end_location
 
     if 'n_people' in data:
@@ -270,17 +270,17 @@ def accept_trip(request, pk):
     try:
         trip = Trip.objects.get(pk=pk)
     except Trip.DoesNotExist:
-        return Response({'message': 'Trip não encontrada.'}, status=404)
+        return Response({'message': 'Trip n├úo encontrada.'}, status=404)
 
     if trip.status_trip != "pending":
-        return Response({"message": "Trip não está disponível para aceitar."}, status=400)
+        return Response({"message": "Trip n├úo est├í dispon├¡vel para aceitar."}, status=400)
 
     driver_id = request.data.get('driver_id')
     if not driver_id:
-        return Response({'message': 'driver_id é obrigatório.'}, status=400)
+        return Response({'message': 'driver_id ├® obrigat├│rio.'}, status=400)
     
     if not Driver.objects.filter(pk=driver_id).exists():
-        return Response({'message': 'Motorista inválido.'}, status=400)
+        return Response({'message': 'Motorista inv├ílido.'}, status=400)
     
     trip.driver_id = driver_id
     trip.status_trip = "accepted"
@@ -317,7 +317,7 @@ def finish_trip(request, pk):
     try:
         trip = Trip.objects.get(pk=pk)
     except Trip.DoesNotExist:
-        return Response({'message': 'Trip não encontrada.'}, status=404)
+        return Response({'message': 'Trip n├úo encontrada.'}, status=404)
 
     trip.status_trip = "finished"
     trip.save()
@@ -334,10 +334,10 @@ def reject_trip(request, pk):
     try:
         trip = Trip.objects.get(pk=pk)
     except Trip.DoesNotExist:
-        return Response({'message': 'Trip não encontrada.'}, status=404)
+        return Response({'message': 'Trip n├úo encontrada.'}, status=404)
 
     if trip.status_trip != "pending":
-        return Response({"message": "Trip não está disponível para rejeitar."}, status=400)
+        return Response({"message": "Trip n├úo est├í dispon├¡vel para rejeitar."}, status=400)
 
     trip.status_trip = "cancelled"
     trip.save()
@@ -357,7 +357,7 @@ def reject_trip(request, pk):
 @api_view(['POST'])
 def criar_pagamento(request):
     """
-    Cria uma intenção de pagamento Stripe para uma viagem.
+    Cria uma inten├º├úo de pagamento Stripe para uma viagem.
     
     Body esperado:
     {
@@ -368,7 +368,7 @@ def criar_pagamento(request):
     """
     if not stripe.api_key:
         return Response(
-            {'message': 'Stripe não está configurado no servidor'},
+            {'message': 'Stripe n├úo est├í configurado no servidor'},
             status=status.HTTP_400_BAD_REQUEST
         )
     
@@ -377,10 +377,10 @@ def criar_pagamento(request):
     trip_id = data.get('trip_id')
     description = data.get('description', 'Pagamento de Viagem')
     
-    # Validar campos obrigatórios
+    # Validar campos obrigat├│rios
     if not amount or not trip_id:
         return Response(
-            {'message': 'amount e trip_id são obrigatórios'},
+            {'message': 'amount e trip_id s├úo obrigat├│rios'},
             status=status.HTTP_400_BAD_REQUEST
         )
     
@@ -389,7 +389,7 @@ def criar_pagamento(request):
         trip = Trip.objects.get(pk=trip_id)
     except Trip.DoesNotExist:
         return Response(
-            {'message': 'Viagem não encontrada'},
+            {'message': 'Viagem n├úo encontrada'},
             status=status.HTTP_404_NOT_FOUND
         )
     
@@ -400,7 +400,7 @@ def criar_pagamento(request):
             raise ValueError()
     except (ValueError, TypeError):
         return Response(
-            {'message': 'amount deve ser um número positivo em centavos'},
+            {'message': 'amount deve ser um n├║mero positivo em centavos'},
             status=status.HTTP_400_BAD_REQUEST
         )
     
@@ -449,7 +449,7 @@ def confirmar_pagamento(request):
     """
     if not stripe.api_key:
         return Response(
-            {'message': 'Stripe não está configurado no servidor'},
+            {'message': 'Stripe n├úo est├í configurado no servidor'},
             status=status.HTTP_400_BAD_REQUEST
         )
     
@@ -459,7 +459,7 @@ def confirmar_pagamento(request):
     
     if not payment_intent_id or not trip_id:
         return Response(
-            {'message': 'payment_intent_id e trip_id são obrigatórios'},
+            {'message': 'payment_intent_id e trip_id s├úo obrigat├│rios'},
             status=status.HTTP_400_BAD_REQUEST
         )
     
@@ -482,12 +482,12 @@ def confirmar_pagamento(request):
                 
             except Trip.DoesNotExist:
                 return Response(
-                    {'message': 'Viagem não encontrada'},
+                    {'message': 'Viagem n├úo encontrada'},
                     status=status.HTTP_404_NOT_FOUND
                 )
         else:
             return Response(
-                {'message': f'Pagamento não foi confirmado. Status: {intent.status}'},
+                {'message': f'Pagamento n├úo foi confirmado. Status: {intent.status}'},
                 status=status.HTTP_400_BAD_REQUEST
             )
             
