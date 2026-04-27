@@ -123,7 +123,7 @@ def taxis_disponiveis(request):
         )
 
     taxis_ocupados = obter_taxis_ocupados(start_date, end_date)
-    taxis = Taxi.objects.exclude(id__in=taxis_ocupados).order_by("id")
+    taxis = Taxi.objects.exclude(pk__in=taxis_ocupados).order_by("id")
 
     resultado = []
     for taxi in taxis:
