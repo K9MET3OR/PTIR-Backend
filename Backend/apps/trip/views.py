@@ -34,12 +34,15 @@ def trip_para_json(trip):
     taxi_matricula = None
     taxi_id = trip.taxi_id
     
+    print(f"[TRIP] Trip {trip.id}: taxi_id={taxi_id}, shift_id={trip.shift_id}")
+    
     # Se o táxi não está diretamente atribuído, tentar obter do shift
     if not taxi_id and trip.shift_id:
         try:
             from apps.shift.models import Shift
             shift = Shift.objects.get(pk=trip.shift_id)
             taxi_id = shift.taxi_id
+            print(f"[TRIP] Obtido taxi_id do shift: {taxi_id}")
         except Exception as e:
             print(f"Erro ao obter shift: {e}")
     
@@ -48,9 +51,13 @@ def trip_para_json(trip):
             from apps.taxi.models import Taxi
             taxi = Taxi.objects.get(pk=taxi_id)
             taxi_matricula = taxi.matricula
+            print(f"[TRIP] Obtida matrícula: {taxi_matricula}")
         except Exception as e:
             print(f"Erro ao obter taxi: {e}")
             taxi_matricula = "N/A"
+    else:
+        print(f"[TRIP] taxi_id é None")
+        taxi_matricula = "N/A"
     
     return {
         'id': str(trip.id),
@@ -291,15 +298,29 @@ def accept_trip(request, pk):
         from django.utils import timezone
         
         # Buscar shift ativo do motorista
+        # Procurar primeiro por um shift que cobre o horário atual
+        now = timezone.now()
         active_shift = Shift.objects.filter(
             driver_id=driver_id,
             status_shift='active',
-            end_date__isnull=True
+            start_date__lte=now,
+            end_date__gte=now
         ).first()
+        
+        # Se não encontrar um que cobre agora, pegar o mais recente ativo
+        if not active_shift:
+            active_shift = Shift.objects.filter(
+                driver_id=driver_id,
+                status_shift='active'
+            ).order_by('-start_date').first()
+        
+        print(f"[TRIP] Accept - Procurando shift para driver {driver_id}, agora: {now}")
+        print(f"[TRIP] Accept - Shift encontrado: {active_shift}")
         
         if active_shift:
             trip.shift_id = active_shift.id
             trip.taxi_id = active_shift.taxi_id
+            print(f"[TRIP] Accept - Atribuído shift {active_shift.id}, taxi {active_shift.taxi_id}")
     except Exception as e:
         print(f"Erro ao atribuir shift: {e}")
     

@@ -348,3 +348,35 @@ def gerir_shift(request, id_shift):
         },
         status=200,
     )
+
+
+@api_view(["POST"])
+def terminar_shift(request, id_shift):
+    """
+    Termina um shift (coloca end_date para agora e status para inactive).
+    """
+    from django.utils import timezone
+    
+    try:
+        shift = Shift.objects.get(pk=id_shift)
+    except Shift.DoesNotExist:
+        return Response({"message": "Shift não encontrado."}, status=404)
+    
+    if shift.status_shift != "active":
+        return Response(
+            {"message": f"Shift não está ativo. Status atual: {shift.status_shift}"},
+            status=400
+        )
+    
+    shift.end_date = timezone.now()
+    shift.status_shift = "inactive"
+    shift.save()
+    
+    return Response(
+        {
+            "success": True,
+            "message": "Shift terminado com sucesso",
+            "shift": shift_para_json(shift)
+        },
+        status=200,
+    )
