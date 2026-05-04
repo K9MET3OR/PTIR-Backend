@@ -67,7 +67,7 @@ Projecto Tecnologias informações e redes Grupo 2
 #### api/shift/
 - api/shift/ (Listar Shifts)
 - api/shift/register (Register)
-- api/shift/taxis-available (Listar Taxis Available)
+- api/shift/taxis-available/ (Listar Taxis Available)
 - api/shift/driver/<uuid:driver_id> (Listar Driver Shift)
 - api/shift/<uuid:id_shift>/finish (Finish Shift)
 - api/shift/<uuid:id_shift> (Update Shift)
