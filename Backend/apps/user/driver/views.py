@@ -6,6 +6,8 @@ import logging
 import bcrypt
 import jwt
 import requests
+import csv
+from pathlib import Path
 from django.conf import settings
 from django.db import IntegrityError, transaction
 from rest_framework.decorators import api_view
@@ -45,70 +47,63 @@ def motorista_para_json(motorista):
 _CP_RE = re.compile(r'^\d{4}-\d{3}$')
 
 
+_CP_RE = re.compile(r'^\d{4}-\d{3}$')
+
+
 def _lookup_localidade(codigo_postal: str):
     """
-    Consulta a API de códigos postais e devolve a localidade.
-    Retorna (localidade: str, error_response | None).
+    Procura a localidade num ficheiro CSV local de códigos postais.
+    O ficheiro tem cabeçalho com colunas:
+    num_cod_postal, ext_cod_postal, desig_postal
     """
     logger.debug(f"_lookup_localidade called with: {codigo_postal}")
-    
+
     if not _CP_RE.match(codigo_postal):
-        logger.debug(f"Invalid format for codigo_postal: {codigo_postal}")
         return None, Response(
             {'message': 'Formato de código postal inválido. Use XXXX-XXX.'},
             status=400,
         )
 
-    cp4, cp3 = codigo_postal.split('-')
-    url = f"{settings.POSTAL_CODE_API_URL}/{cp4}/{cp3}"
-    logger.debug(f"Calling postal code API: {url}")
+    base_dir = Path(__file__).resolve().parents[3]
+    csv_path = base_dir / 'data' / 'codigos_postais.csv'
+    logger.debug(f"A procurar ficheiro CSV em: {csv_path}")
 
-    try:
-        resp = requests.get(url, timeout=5)
-        logger.debug(f"API response status: {resp.status_code}")
-    except requests.RequestException as e:
-        logger.error(f"RequestException: {e}")
+    if not csv_path.exists():
         return None, Response(
-            {'message': 'Serviço de códigos postais indisponível.'},
-            status=502,
-        )
-
-    if resp.status_code != 200:
-        logger.debug(f"API returned non-200 status: {resp.status_code}")
-        return None, Response(
-            {'message': 'Código postal não encontrado.'},
-            status=400,
+            {'message': 'Base de dados de códigos postais não encontrada no servidor.'},
+            status=500,
         )
 
     try:
-        data = resp.json()
-        logger.debug(f"API response data: {data}")
-    except ValueError as e:
-        logger.error(f"Failed to parse API response: {e}")
+        with open(csv_path, mode='r', encoding='utf-8', newline='') as f:
+            reader = csv.DictReader(f)
+
+            for row in reader:
+                cp4 = str(row.get('num_cod_postal', '')).strip()
+                cp3 = str(row.get('ext_cod_postal', '')).strip()
+                localidade = str(row.get('desig_postal', '')).strip()
+
+                if not cp4 or not cp3:
+                    continue
+
+                cp = f"{cp4}-{cp3.zfill(3)}"
+
+                if cp == codigo_postal and localidade:
+                    logger.debug(f"Localidade encontrada: {localidade}")
+                    return localidade, None
+
+    except Exception as e:
+        logger.error(f"Erro ao ler CSV de códigos postais: {e}")
         return None, Response(
-            {'message': 'Resposta inválida do serviço de códigos postais.'},
-            status=502,
+            {'message': 'Erro ao ler a base de códigos postais.'},
+            status=500,
         )
 
-    if not data:
-        logger.debug("API returned empty data")
-        return None, Response(
-            {'message': 'Código postal não encontrado.'},
-            status=400,
-        )
-
-    localidade = data[0].get('Localidade', '').strip()
-    logger.debug(f"Extracted localidade: {localidade}")
-    
-    if not localidade:
-        logger.debug("Localidade is empty")
-        return None, Response(
-            {'message': 'Código postal não encontrado.'},
-            status=400,
-        )
-
-    logger.debug(f"Success - returning localidade: {localidade}")
-    return localidade, None
+    logger.debug(f"Código postal não encontrado no CSV: {codigo_postal}")
+    return None, Response(
+        {'message': 'Código postal não encontrado.'},
+        status=400,
+    )
 
 
 def _validate_ano_nascimento(ano):
@@ -242,11 +237,12 @@ def registo_motorista(request):
         except ValueError:
             return Response({'message': 'validade_carta inválida. Use YYYY-MM-DD.'}, status=400)
 
-    # --- Lookup localidade (opcional) ---
+    # --- Lookup localidade (opcional, mas se vier tem de ser válida) ---
     localidade = ''
-    if codigo_postal and _CP_RE.match(codigo_postal):
-        localidade, _ = _lookup_localidade(codigo_postal)
-        localidade = localidade or ''
+    if codigo_postal:
+        localidade, err = _lookup_localidade(codigo_postal)
+        if err:
+            return err
 
     # --- Password aleatória (autenticação via Firebase) ---
     password = data.get('password') or secrets.token_urlsafe(16)
