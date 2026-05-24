@@ -16,6 +16,7 @@ INSTALLED_APPS = [
     'apps.shift.apps.ShiftConfig',
     'apps.refuel.apps.RefuelConfig',
     'apps.invoice.apps.InvoiceConfig',
+    'apps.report.apps.ReportConfig',
 ]
 
 import os

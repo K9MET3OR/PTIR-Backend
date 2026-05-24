@@ -75,7 +75,15 @@ Projecto Tecnologias informações e redes Grupo 2
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
 #### api/invoice/
+- api/invoice/ (Listar Invoice)
+- api/invoice/register (Register)
+- api/invoice/driver/<uuid:driver_id> (Listar Invoices Driver)
+- api/invoice/<int:id_invoice> (Update Invoice)
 
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
 #### api/refuel/
+- api/refuel/register (Register)
+- api/refuel/taxi/<uuid:taxi_id> (Listar Refuel Taxi)
+- api/refuel/<int:id_refuel> (Update Refuel)
+
