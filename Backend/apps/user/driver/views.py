@@ -13,6 +13,8 @@ from django.db import IntegrityError, transaction
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 
+from apps.shift.models import Shift
+
 from apps.user.models import User
 from apps.user.utils import validar_nif
 from .models import Driver
@@ -362,7 +364,7 @@ def login_nif(request):
 
 @api_view(['GET'])
 def listar_motoristas(request):
-    motoristas = Driver.objects.all().order_by('-created_at')
+    motoristas = Driver.objects.all().order_by('-updated_at')
 
     resultado = []
     for motorista in motoristas:
@@ -395,6 +397,16 @@ def gerir_motorista(request, id_motorista):
         )
 
     if request.method == 'DELETE':
+        tem_turnos = Shift.objects.filter(driver_id=motorista.id).exists()
+
+        if tem_turnos:
+            return Response(
+                {
+                    'message': 'Não é possível remover o motorista porque já requisitou um táxi para um turno.'
+                },
+                status=409,
+            )
+
         motorista_id = str(motorista.id)
         motorista.delete()
 
@@ -507,23 +519,23 @@ def gerir_motorista(request, id_motorista):
         motorista.estado = estado
         novo_estado = estado
 
-        try:
-            motorista.save()
+    try:
+        motorista.save()
 
-            if novo_estado is not None:
-                Driver.objects.filter(pk=motorista.pk).update(estado=novo_estado)
-                motorista.refresh_from_db()
+        if novo_estado is not None:
+            Driver.objects.filter(pk=motorista.pk).update(estado=novo_estado)
+            motorista.refresh_from_db()
 
-        except IntegrityError:
-            return Response({'message': 'Erro ao atualizar motorista.'}, status=409)
-        
-        return Response(
-            {
-                'success': True,
-                'motorista': motorista_para_json(motorista),
-            },
-            status=200,
-        )
+    except IntegrityError:
+        return Response({'message': 'Erro ao atualizar motorista.'}, status=409)
+    
+    return Response(
+        {
+            'success': True,
+            'motorista': motorista_para_json(motorista),
+        },
+        status=200,
+    )
 
 
 @api_view(['PATCH'])

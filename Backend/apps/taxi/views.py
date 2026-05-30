@@ -11,6 +11,8 @@ from rest_framework.decorators import api_view
 from rest_framework.response import Response
 
 from .models import Taxi
+from apps.shift.models import Shift
+from apps.trip.models import Trip
 
 _NIVEL_CANON = {
     'básico': 'Básico',
@@ -24,6 +26,20 @@ _NIVEL_VALIDOS = frozenset(_NIVEL_CANON.keys())
 _MOTOR_VALIDOS = frozenset(_MOTOR_CANON.keys())
 _TAXI_UPDATE_FIELDS = frozenset(('modelo', 'matricula', 'ano_compra', 'consumo_medio', 'marca', 'tipo_motor', 'nivel_conforto', 'estado', 'latitude', 'longitude'))
 _ESTADO_VALIDOS = frozenset(('disponivel', 'indisponivel', 'ocupado'))
+_TAXI_BRANDS = {
+    'Toyota': {'Prius', 'Corolla', 'Camry', 'Yaris'},
+    'Hyundai': {'Ioniq', 'i30', 'i20', 'Elantra'},
+    'Kia': {'Niro', 'Ceed', 'Picanto', 'Sportage'},
+    'Mercedes-Benz': {'E-Class', 'C-Class', 'A-Class', 'V-Class'},
+    'BMW': {'3 Series', '5 Series', '1 Series', 'X5'},
+    'Volkswagen': {'Passat', 'Golf', 'Polo', 'Tiguan'},
+    'Renault': {'Megane', 'Clio', 'Espace', 'Scenic'},
+    'Peugeot': {'308', '307', '3008', '5008'},
+    'Citroën': {'C5', 'C3', 'C-Elysée', 'Berlingo'},
+    'Fiat': {'500', 'Panda', 'Tipo', 'Ducato'},
+    'Nissan': {'Qashqai', 'Altima', 'Micra', 'X-Trail'},
+    'Chevrolet': {'Cruze', 'Spark', 'Cobalt', 'Onix'},
+}
 
 # ---------------------------------------------------------------------------
 # Helpers — serialização
@@ -135,6 +151,15 @@ def validate_taxi_payload(data):
         marca = str(data['marca']).strip()
         if len(marca) > 50:
             return 'marca demasiado longa.'
+        
+    marca = str(data.get('marca', '')).strip()
+    modelo = str(data.get('modelo', '')).strip()
+
+    if marca not in _TAXI_BRANDS:
+        return 'marca invalida. Deve ser selecionada da lista predefinida.'
+
+    if modelo not in _TAXI_BRANDS[marca]:
+        return 'modelo invalido para a marca selecionada.'
 
     if 'tipo_motor' in data and data.get('tipo_motor') not in (None, ''):
         tm = str(data['tipo_motor']).strip().lower()
@@ -155,14 +180,14 @@ def _normalize_create_body(data):
         return None, err
 
     marca = str(data.get('marca', '')).strip() if data.get('marca') is not None else ''
-    motor = (str(data.get('tipo_motor', 'gasolina')).strip().lower()
-             if data.get('tipo_motor') not in (None, '') else 'gasolina')
+    motor = (str(data.get('tipo_motor', 'Combustão')).strip().lower()
+             if data.get('tipo_motor') not in (None, '') else 'combustão')
     if motor not in _MOTOR_VALIDOS:
-        motor = 'gasolina'
-    nivel = (str(data.get('nivel_conforto', 'conforto')).strip().lower()
-             if data.get('nivel_conforto') not in (None, '') else 'conforto')
+        motor = 'combustão'
+    nivel = (str(data.get('nivel_conforto', 'Básico')).strip().lower()
+             if data.get('nivel_conforto') not in (None, '') else 'básico')
     if nivel not in _NIVEL_VALIDOS:
-        nivel = 'conforto'
+        nivel = 'básico'
 
     return {
         'modelo': str(data['modelo']).strip(),
@@ -170,8 +195,8 @@ def _normalize_create_body(data):
         'ano_compra': int(data['ano_compra']),
         'consumo_medio': _parse_consumo_medio(data['consumo_medio']),
         'marca': marca[:50],
-        'tipo_motor': _MOTOR_CANON.get(motor, 'Gasolina'),
-        'nivel_conforto': _NIVEL_CANON.get(nivel, 'Conforto'),
+        'tipo_motor': _MOTOR_CANON.get(motor, 'Combustão'),
+        'nivel_conforto': _NIVEL_CANON.get(nivel, 'Básico'),
         'estado': 'disponivel',  # Novos táxis começam sempre disponíveis
     }, None
 
@@ -220,12 +245,12 @@ def validate_taxi_update_payload(data):
     if 'tipo_motor' in data and data['tipo_motor'] not in (None, ''):
         tm = str(data['tipo_motor']).strip().lower()
         if tm not in _MOTOR_VALIDOS:
-            return "tipo_motor deve ser 'Gasolina', 'Diesel', 'Elétrico' ou 'Híbrido'."
+            return "tipo_motor deve ser 'Combustão' ou 'Elétrico'."
 
     if 'nivel_conforto' in data and data['nivel_conforto'] not in (None, ''):
         nv = str(data['nivel_conforto']).strip().lower()
         if nv not in _NIVEL_VALIDOS:
-            return "nivel_conforto deve ser 'Standard', 'Conforto' ou 'Premium'."
+            return "nivel_conforto deve ser 'Básico' ou 'Luxuoso'."
 
     if 'estado' in data and data['estado'] not in (None, ''):
         estado = str(data['estado']).strip().lower()
@@ -424,7 +449,7 @@ def registo_taxi(request):
 
 @api_view(['GET'])
 def listar_taxis(request):
-    taxis = list(Taxi.objects.all().order_by('-created_at'))
+    taxis = list(Taxi.objects.all().order_by('-updated_at'))
     return Response(
         {
             'success': True,
@@ -447,6 +472,16 @@ def gerir_taxi(request, id_taxi):
         return Response({'success': True, 'taxi': _taxi_to_dict(taxi)}, status=status.HTTP_200_OK)
 
     if request.method == 'DELETE':
+        tem_turnos = Shift.objects.filter(taxi_id=taxi.id).exists()
+
+        if tem_turnos:
+            return Response(
+                {
+                    'message': 'Não é possível remover o táxi porque já foi requisitado para um turno.'
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
         return _apagar_taxi_instance(taxi)
 
     # PATCH / PUT
@@ -454,7 +489,33 @@ def gerir_taxi(request, id_taxi):
     err = validate_taxi_update_payload(data)
     if err:
         return Response({'message': err}, status=status.HTTP_400_BAD_REQUEST)
+    
+    marca_final = str(data.get('marca', taxi.marca)).strip()
+    modelo_final = str(data.get('modelo', taxi.modelo)).strip()
 
+    if marca_final not in _TAXI_BRANDS:
+        return Response(
+            {'message': 'marca invalida. Deve ser selecionada da lista predefinida.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if modelo_final not in _TAXI_BRANDS[marca_final]:
+        return Response(
+            {'message': 'modelo invalido para a marca selecionada.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    
+    if 'nivel_conforto' in data:
+        tem_viagens = Trip.objects.filter(taxi_id=taxi.id).exists()
+
+        if tem_viagens:
+            return Response(
+                {
+                    'message': 'Não é possível alterar o nível de conforto porque o táxi já fez viagens com clientes.'
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+        
     try:
         with transaction.atomic():
             _apply_taxi_updates(taxi, data)
