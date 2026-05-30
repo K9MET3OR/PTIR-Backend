@@ -7,6 +7,7 @@ from rest_framework.response import Response
 
 from .models import Refuel
 from apps.shift.models import Shift
+from apps.user.views import firebase_auth_required, get_user_from_request
 
 
 def refuel_para_json(refuel):
@@ -39,6 +40,7 @@ def motor_eletrico(tipo_motor):
 
 
 @api_view(["POST"])
+@firebase_auth_required
 def registar_refuel(request):
     data = request.data
 
@@ -143,6 +145,7 @@ def registar_refuel(request):
 
 
 @api_view(["GET"])
+@firebase_auth_required
 def listar_refuels(request):
     refuels = Refuel.objects.all().order_by("-data_inicio")
 
@@ -157,6 +160,7 @@ def listar_refuels(request):
 
 
 @api_view(["GET"])
+@firebase_auth_required
 def listar_refuels_taxi(request, taxi_id):
     refuels = Refuel.objects.filter(taxi_id=taxi_id).order_by("-data_inicio")
 
@@ -172,6 +176,7 @@ def listar_refuels_taxi(request, taxi_id):
 
 
 @api_view(["GET", "DELETE"])
+@firebase_auth_required
 def gerir_refuel(request, id_refuel):
     refuel = Refuel.objects.filter(pk=id_refuel).first()
 

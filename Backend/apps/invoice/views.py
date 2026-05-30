@@ -79,9 +79,13 @@ def register_invoice(request):
             status=400,
         )
 
+    # Obter o NIF do cliente
     try:
-        client_nif = trip.client.nif
-    except Exception:
+        from apps.user.models import User
+        client_user = User.objects.get(pk=trip.client_id)
+        client_nif = client_user.nif
+    except Exception as e:
+        print(f"[INVOICE] Erro ao obter NIF do cliente: {e}")
         client_nif = None
 
     if not client_nif:

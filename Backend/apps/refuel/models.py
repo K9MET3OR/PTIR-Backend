@@ -21,9 +21,10 @@ class Refuel(models.Model):
     data_inicio = models.DateTimeField()
     data_fim = models.DateTimeField(null=True, blank=True)
     tipo = models.CharField(max_length=20, choices=TIPO_CHOICES)
-    kms_previos = models.DecimalField(max_digits=10, decimal_places=2)
-    preco = models.DecimalField(max_digits=10, decimal_places=2)
-    quantidade = models.DecimalField(max_digits=10, decimal_places=2)
+    litros = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    kwh = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    euros_pagos = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    kms_taxi = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

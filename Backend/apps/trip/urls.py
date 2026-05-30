@@ -11,6 +11,7 @@ urlpatterns = [
     path('<uuid:pk>/finish', views.finish_trip),
     path('pagamento/create', views.criar_pagamento),
     path('pagamento/confirm', views.confirmar_pagamento),
+    path('driver/<uuid:driver_id>', views.listar_viagens_motorista),
 
     path('register/', views.registar_trip),
     path('<uuid:id_trip>/', views.gerir_trip),
@@ -19,4 +20,5 @@ urlpatterns = [
     path('<uuid:pk>/finish/', views.finish_trip),
     path('pagamento/create/', views.criar_pagamento),
     path('pagamento/confirm/', views.confirmar_pagamento),
+    path('driver/<uuid:driver_id>/', views.listar_viagens_motorista),
 ]

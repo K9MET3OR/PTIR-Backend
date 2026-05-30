@@ -335,12 +335,15 @@ def accept_trip(request, pk):
 
 @api_view(['POST'])
 def finish_trip(request, pk):
+    from django.utils import timezone
+    
     try:
         trip = Trip.objects.get(pk=pk)
     except Trip.DoesNotExist:
         return Response({'message': 'Trip n├úo encontrada.'}, status=404)
 
     trip.status_trip = "finished"
+    trip.end_date = timezone.now()
     trip.save()
 
     return Response({
@@ -491,8 +494,10 @@ def confirmar_pagamento(request):
         if intent.status == 'succeeded':
             # Atualizar o status da viagem
             try:
+                from django.utils import timezone
                 trip = Trip.objects.get(pk=trip_id)
                 trip.status_trip = 'finished'
+                trip.end_date = timezone.now()
                 trip.save()
                 
                 return Response({
@@ -516,4 +521,33 @@ def confirmar_pagamento(request):
         return Response(
             {'message': f'Erro ao verificar pagamento: {str(e)}'},
             status=status.HTTP_400_BAD_REQUEST
+        )
+
+
+@api_view(['GET'])
+def listar_viagens_motorista(request, driver_id):
+    """Lista todas as viagens finalizadas de um motorista (para emitir faturas)"""
+    try:
+        viagens = Trip.objects.filter(
+            driver_id=driver_id,
+            status_trip='finished'
+        ).order_by('-start_date')
+        
+        resultado = []
+        for trip in viagens:
+            resultado.append(trip_para_json(trip))
+        
+        return Response(
+            {
+                'success': True,
+                'driver_id': str(driver_id),
+                'trips': resultado,
+                'total': len(resultado),
+            },
+            status=200,
+        )
+    except Exception as e:
+        return Response(
+            {'message': f'Erro ao listar viagens: {str(e)}'},
+            status=400,
         )
