@@ -3,6 +3,8 @@ from django.utils.dateparse import parse_datetime
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 
+from django.utils import timezone
+
 from .models import Shift
 from apps.taxi.models import Taxi
 from apps.user.driver.models import Driver
@@ -13,6 +15,9 @@ def shift_para_json(shift):
         "id": str(shift.id),
         "driver_id": str(shift.driver_id),
         "taxi_id": str(shift.taxi_id),
+        "taxi_matricula": shift.taxi.matricula if shift.taxi else "",
+        "taxi_marca": shift.taxi.marca if shift.taxi else "",
+        "taxi_modelo": shift.taxi.modelo if shift.taxi else "",
         "start_date": shift.start_date,
         "end_date": shift.end_date,
         "status_shift": shift.status_shift,
@@ -49,6 +54,7 @@ def turno_interseta_outro(driver_id, start_date, end_date, excluir_shift_id=None
 
 def obter_taxis_ocupados(start_date, end_date):
     return Shift.objects.filter(
+        status_shift__in=["scheduled", "active"],
         start_date__lt=end_date,
         end_date__gt=start_date
     ).values_list("taxi_id", flat=True)
@@ -206,6 +212,7 @@ def registar_shift(request):
 
     taxi_ocupado = Shift.objects.filter(
         taxi_id=taxi.id,
+        status_shift__in=["scheduled", "active"],
         start_date__lt=end_date,
         end_date__gt=start_date
     ).exists()
@@ -216,13 +223,19 @@ def registar_shift(request):
             status=400,
         )
 
+    agora = timezone.now()
+    if start_date <= agora < end_date:
+        status_inicial = "active"
+    else:
+        status_inicial = "scheduled"
+
     try:
         shift = Shift.objects.create(
             driver_id=driver.id,
             taxi_id=taxi.id,
             start_date=start_date,
             end_date=end_date,
-            status_shift=data.get("status_shift", "active"),
+            status_shift=status_inicial,
         )
     except IntegrityError:
         return Response({"message": "Erro ao registar shift."}, status=409)
@@ -318,6 +331,7 @@ def gerir_shift(request, id_shift):
 
     taxi_ocupado = Shift.objects.filter(
         taxi_id=taxi.id,
+        status_shift__in=["scheduled", "active"],
         start_date__lt=end_date,
         end_date__gt=start_date
     ).exclude(pk=shift.id).exists()
@@ -335,6 +349,14 @@ def gerir_shift(request, id_shift):
 
     if "status_shift" in data:
         shift.status_shift = data["status_shift"]
+    else:
+        agora = timezone.now()
+        if end_date <= agora:
+            shift.status_shift = "inactive"
+        elif start_date <= agora < end_date:
+            shift.status_shift = "active"
+        else:
+            shift.status_shift = "scheduled"
 
     try:
         shift.save()
@@ -352,26 +374,29 @@ def gerir_shift(request, id_shift):
 
 @api_view(["POST"])
 def terminar_shift(request, id_shift):
-    """
-    Termina um shift (coloca end_date para agora e status para inactive).
-    """
-    from django.utils import timezone
-    
     try:
         shift = Shift.objects.get(pk=id_shift)
     except Shift.DoesNotExist:
         return Response({"message": "Shift não encontrado."}, status=404)
-    
-    if shift.status_shift != "active":
+
+    if shift.status_shift not in ["active", "scheduled"]:
         return Response(
-            {"message": f"Shift não está ativo. Status atual: {shift.status_shift}"},
+            {"message": f"Shift não pode ser terminado. Status atual: {shift.status_shift}"},
             status=400
         )
-    
-    shift.end_date = timezone.now()
+
+    agora = timezone.now()
+
+    if shift.start_date >= agora:
+        return Response(
+            {"message": "Não é possível terminar um turno antes da hora de início."},
+            status=400
+        )
+
+    shift.end_date = agora
     shift.status_shift = "inactive"
-    shift.save()
-    
+    shift.save(update_fields=["end_date", "status_shift", "updated_at"])
+
     return Response(
         {
             "success": True,
