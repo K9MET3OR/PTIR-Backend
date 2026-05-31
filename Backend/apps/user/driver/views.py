@@ -188,7 +188,7 @@ def registo_motorista(request):
     email     = str(data.get('email', '')).strip()
     name      = str(data.get('nome') or data.get('name', '')).strip()
     nif       = str(data.get('nif', '')).strip()
-    genero    = str(data.get('genero', '')).strip()
+    genero    = str(data.get('genero', '')).strip().capitalize()
     num_carta = str(data.get('n_carta') or data.get('num_carta_conducao', '')).strip()
     telefone  = str(data.get('telefone') or data.get('mobile', '')).strip()
     validade_carta_raw = data.get('validade_carta', '') or ''
@@ -221,11 +221,12 @@ def registo_motorista(request):
         return err
 
     # --- Validate genero ---
-    if genero not in ('M', 'F'):
-        return Response(
-            {'message': "genero deve ser 'M' ou 'F'."},
-            status=400,
-        )
+    if genero in ('Masculino', 'M'):
+        genero_db = 'M'
+    elif genero in ('Feminino', 'F'):
+        genero_db = 'F'
+    else:
+        return Response({'message': "Género inválido."}, status=400)
 
     # --- Validate num_carta ---
     if not num_carta or len(num_carta) < 5:
@@ -279,7 +280,7 @@ def registo_motorista(request):
                 nif=nif,
                 mobile=telefone,
                 ano_nascimento=ano_nascimento,
-                genero=genero,
+                genero=genero_db,
                 num_carta_conducao=num_carta,
                 validade_carta=validade_carta,
                 localidade=localidade,
