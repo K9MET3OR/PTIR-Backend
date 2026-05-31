@@ -16,6 +16,7 @@ def create_client(data):
     password = data['password']
     name = data['name'].strip()
     nif = str(data['nif']).strip()
+    genero = data['genero'].strip().lower()
 
     hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
 
@@ -35,12 +36,12 @@ def create_client(data):
                 name=name,
                 role='cliente',
                 nif=nif,
+                genero=genero,
             )
     except IntegrityError:
         return None, 'Dados duplicados.', 409
 
-    user = User.objects.get(pk=client.pk)
-    return user, None, None
+    return client, None, None
 
 
 def login_client(data):

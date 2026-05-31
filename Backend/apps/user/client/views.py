@@ -17,6 +17,7 @@ def client_para_json(client):
         'name': client.name,
         'role': client.role,
         'nif': client.nif,
+        'genero': client.genero,
     }
 
 
@@ -28,21 +29,14 @@ def registo_client(request):
     if err:
         return Response({'message': err}, status=400)
 
-    user, service_err, status_code = create_client(data)
+    client, service_err, status_code = create_client(data)
     if service_err:
         return Response({'message': service_err}, status=status_code)
 
     return Response(
         {
             'success': True,
-            'user': {
-                'id': str(user.id),
-                'username': user.username,
-                'email': user.email,
-                'name': user.name,
-                'role': user.role,
-                'nif': user.nif,
-            },
+            'user': client_para_json(client),
         },
         status=201,
     )
@@ -153,6 +147,16 @@ def gerir_client(request, id_client):
             return Response({'message': 'NIF já registado.'}, status=409)
 
         client.nif = nif
+
+    if 'genero' in data:
+        genero = str(data['genero']).strip().lower()
+        if genero not in ('feminino', 'masculino'):
+            return Response(
+                {'message': "Genero invalido. Deve ser 'feminino' ou 'masculino'."},
+                status=400
+            )
+
+        client.genero = genero
 
     try:
         client.save()

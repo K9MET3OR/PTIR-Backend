@@ -14,6 +14,16 @@ class Client(User):
         related_name='client_profile',
     )
 
+    genero = models.CharField(
+        max_length=20,
+        choices=[
+            ('masculino', 'Masculino'),
+            ('feminino', 'Feminino'),
+        ],
+        null=True,
+        blank=True,
+    )
+
     class Meta:
         db_table = 'clients'
 
