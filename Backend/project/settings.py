@@ -17,6 +17,7 @@ INSTALLED_APPS = [
     'apps.refuel.apps.RefuelConfig',
     'apps.invoice.apps.InvoiceConfig',
     'apps.report.apps.ReportConfig',
+    "apps.geocoding.apps.GeocodingConfig",
 ]
 
 import os

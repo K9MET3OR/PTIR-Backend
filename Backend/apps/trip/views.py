@@ -21,34 +21,27 @@ def trip_para_json(trip):
         try:
             driver = Driver.objects.get(pk=trip.driver_id)
             driver_name = driver.name or "Motorista"
-        except Exception as e:
-            print(f"Erro ao obter driver: {e}")
+        except Exception:
             driver_name = "Motorista"
 
     taxi_matricula = None
     taxi_id = trip.taxi_id
 
-    print(f"[TRIP] Trip {trip.id}: taxi_id={taxi_id}, shift_id={trip.shift_id}")
-
     if not taxi_id and trip.shift_id:
         try:
             shift = Shift.objects.get(pk=trip.shift_id)
             taxi_id = shift.taxi_id
-            print(f"[TRIP] Obtido taxi_id do shift: {taxi_id}")
-        except Exception as e:
-            print(f"Erro ao obter shift: {e}")
+        except Exception:
+            taxi_id = None
 
     if taxi_id:
         try:
             from apps.taxi.models import Taxi
             taxi = Taxi.objects.get(pk=taxi_id)
             taxi_matricula = taxi.matricula
-            print(f"[TRIP] Obtida matrícula: {taxi_matricula}")
-        except Exception as e:
-            print(f"Erro ao obter taxi: {e}")
+        except Exception:
             taxi_matricula = "N/A"
     else:
-        print("[TRIP] taxi_id é None")
         taxi_matricula = "N/A"
 
     return {
@@ -68,6 +61,7 @@ def trip_para_json(trip):
         'n_kms': str(trip.n_kms) if trip.n_kms is not None else None,
         'price': str(trip.price) if trip.price is not None else None,
         'status_trip': trip.status_trip,
+        'rejected_driver_ids': trip.rejected_driver_ids or [],
         'created_at': trip.created_at.isoformat() if trip.created_at else None,
         'updated_at': trip.updated_at.isoformat() if trip.updated_at else None,
     }
@@ -131,7 +125,7 @@ def registar_trip(request):
             n_people=n_people,
             n_kms=data.get('n_kms'),
             price=data.get('price'),
-            nivel_conforto=data.get('nivel_conforto', 'Standard'),
+            nivel_conforto=data.get('nivel_conforto', 'Básico'),
             status_trip=data.get('status_trip', 'pending'),
         )
     except IntegrityError as e:
@@ -277,7 +271,15 @@ def accept_trip(request, pk):
         driver = Driver.objects.get(pk=driver_id)
     except Driver.DoesNotExist:
         return Response({'message': 'Motorista inválido.'}, status=400)
+    
+    rejected_ids = [str(driver_uuid) for driver_uuid in (trip.rejected_driver_ids or [])]
 
+    if str(driver.id) in rejected_ids:
+        return Response(
+            {"message": "Este pedido já rejeitou este motorista."},
+            status=400,
+        )
+    
     agora = timezone.now()
 
     turno_ativo = Shift.objects.filter(
@@ -295,9 +297,7 @@ def accept_trip(request, pk):
     trip.driver_id = driver.id
     trip.shift_id = turno_ativo.id
     trip.taxi_id = turno_ativo.taxi_id
-    trip.status_trip = "accepted"
-
-    print(f"[TRIP] Accept - Driver {driver.id}, shift {turno_ativo.id}, taxi {turno_ativo.taxi_id}")
+    trip.status_trip = "driver_accepted"
 
     trip.save()
 
@@ -307,6 +307,82 @@ def accept_trip(request, pk):
         "trip": trip_para_json(trip)
     }, status=200)
 
+@api_view(['POST'])
+def client_confirm_trip(request, pk):
+    try:
+        trip = Trip.objects.get(pk=pk)
+    except Trip.DoesNotExist:
+        return Response({'message': 'Trip não encontrada.'}, status=404)
+
+    if trip.status_trip != "driver_accepted":
+        return Response(
+            {'message': 'Esta viagem não está à espera de confirmação do cliente.'},
+            status=400
+        )
+
+    trip.status_trip = "client_confirmed"
+    trip.save()
+
+    return Response({
+        'success': True,
+        'message': 'Motorista confirmado com sucesso.',
+        'trip': trip_para_json(trip)
+    }, status=200)
+
+
+@api_view(['POST'])
+def client_reject_trip(request, pk):
+    try:
+        trip = Trip.objects.get(pk=pk)
+    except Trip.DoesNotExist:
+        return Response({'message': 'Trip não encontrada.'}, status=404)
+
+    if trip.status_trip != "driver_accepted":
+        return Response(
+            {'message': 'Esta viagem não está à espera de confirmação do cliente.'},
+            status=400
+        )
+
+    rejected_ids = [str(driver_uuid) for driver_uuid in (trip.rejected_driver_ids or [])]
+
+    if trip.driver_id and str(trip.driver_id) not in rejected_ids:
+        rejected_ids.append(str(trip.driver_id))
+
+    trip.rejected_driver_ids = rejected_ids
+    trip.driver_id = None
+    trip.taxi_id = None
+    trip.shift_id = None
+    trip.status_trip = "pending"
+    trip.save()
+
+    return Response({
+        'success': True,
+        'message': 'Motorista rejeitado. O pedido voltou a ficar pendente.',
+        'trip': trip_para_json(trip)
+    }, status=200)
+
+@api_view(['POST'])
+def start_trip(request, pk):
+    try:
+        trip = Trip.objects.get(pk=pk)
+    except Trip.DoesNotExist:
+        return Response({'message': 'Trip não encontrada.'}, status=404)
+
+    if trip.status_trip != "client_confirmed":
+        return Response(
+            {'message': 'Só é possível iniciar uma viagem confirmada pelo cliente.'},
+            status=400
+        )
+
+    trip.status_trip = "in_progress"
+    trip.start_date = timezone.now()
+    trip.save()
+
+    return Response({
+        "success": True,
+        "message": "Viagem iniciada com sucesso",
+        "trip": trip_para_json(trip)
+    }, status=200)
 
 @api_view(['POST'])
 def finish_trip(request, pk):
@@ -315,7 +391,7 @@ def finish_trip(request, pk):
     except Trip.DoesNotExist:
         return Response({'message': 'Trip não encontrada.'}, status=404)
 
-    trip.status_trip = "finished"
+    trip.status_trip = "awaiting_payment"
     trip.end_date = timezone.now()
     trip.save()
 

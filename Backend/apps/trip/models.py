@@ -6,16 +6,17 @@ import uuid
 class Trip(models.Model):
     STATUS_CHOICES = [
         ("pending", "Pending"),
-        ("accepted", "Accepted"),
+        ("driver_accepted", "Driver Accepted"),
+        ("client_confirmed", "Client Confirmed"),
         ("in_progress", "In Progress"),
+        ("awaiting_payment", "Awaiting Payment"),
         ("finished", "Finished"),
         ("cancelled", "Cancelled"),
     ]
 
     CONFORTO_CHOICES = [
-        ("Standard", "Standard"),
-        ("Conforto", "Conforto"),
-        ("Premium", "Premium"),
+        ("Básico", "Básico"),
+        ("Luxuoso", "Luxuoso"),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -57,6 +58,8 @@ class Trip(models.Model):
     n_people = models.PositiveIntegerField()
     n_kms = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True)
     price = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
+
+    rejected_driver_ids = models.JSONField(default=list, blank=True)
 
     nivel_conforto = models.CharField(
         max_length=20,

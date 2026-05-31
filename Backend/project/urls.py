@@ -11,5 +11,6 @@ urlpatterns = [
     path('api/shift/', include('apps.shift.urls')),
     path('api/invoice/', include('apps.invoice.urls')),
     path('api/refuel/', include('apps.refuel.urls')),
-    path('api/report/', include('apps.report.urls'))
+    path('api/report/', include('apps.report.urls')),
+    path("api/geocoding/", include("apps.geocoding.urls")),
 ]
