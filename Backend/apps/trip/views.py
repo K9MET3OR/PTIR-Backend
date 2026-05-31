@@ -12,6 +12,7 @@ from apps.user.client.models import Client
 from django.utils.dateparse import parse_datetime
 from apps.user.views import firebase_auth_required, get_user_from_request
 from apps.user.driver.models import Driver
+from apps.shift.models import Shift
 
 stripe.api_key = settings.STRIPE_SECRET_KEY if hasattr(settings, 'STRIPE_SECRET_KEY') else None
 
@@ -288,6 +289,21 @@ def accept_trip(request, pk):
     
     if not Driver.objects.filter(pk=driver_id).exists():
         return Response({'message': 'Motorista inv├ílido.'}, status=400)
+    
+    agora = timezone.now()
+
+    turno_ativo = Shift.objects.filter(
+        driver_id=driver.id,
+        status_shift__in=["active"],
+        start_date__lte=agora,
+        end_date__gt=agora,
+    ).first()
+
+    if not turno_ativo:
+        return Response(
+            {"message": "O motorista só pode aceitar pedidos durante um turno ativo."},
+            status=400,
+        )
     
     trip.driver_id = driver_id
     trip.status_trip = "accepted"

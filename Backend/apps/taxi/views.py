@@ -319,7 +319,15 @@ def _get_taxi_or_response(id_taxi):
 
 
 def _apagar_taxi_instance(taxi: Taxi) -> Response:
-    """Apaga um registo Taxi já carregado."""
+    """Apaga um registo Taxi já carregado, respeitando as regras do negócio."""
+    tem_turnos = Shift.objects.filter(taxi_id=taxi.id).exists()
+
+    if tem_turnos:
+        return Response(
+            {'message': 'Não é possível remover o táxi porque já foi requisitado para um turno.'},
+            status=status.HTTP_409_CONFLICT,
+        )
+
     pk = str(taxi.id)
     taxi.delete()
     return Response(
@@ -472,16 +480,6 @@ def gerir_taxi(request, id_taxi):
         return Response({'success': True, 'taxi': _taxi_to_dict(taxi)}, status=status.HTTP_200_OK)
 
     if request.method == 'DELETE':
-        tem_turnos = Shift.objects.filter(taxi_id=taxi.id).exists()
-
-        if tem_turnos:
-            return Response(
-                {
-                    'message': 'Não é possível remover o táxi porque já foi requisitado para um turno.'
-                },
-                status=status.HTTP_409_CONFLICT,
-            )
-
         return _apagar_taxi_instance(taxi)
 
     # PATCH / PUT
