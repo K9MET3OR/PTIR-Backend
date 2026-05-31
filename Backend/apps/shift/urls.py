@@ -7,6 +7,7 @@ urlpatterns = [
     path('taxis-available/', views.taxis_disponiveis),
     path('driver/<uuid:driver_id>', views.listar_shifts_driver),
     path('<int:id_shift>/finish', views.terminar_shift),
+    path('<int:id_shift>/cancelar/', views.cancelar_shift),
     path('<int:id_shift>', views.gerir_shift),
 
     path('registar/', views.registar_shift),

@@ -405,3 +405,39 @@ def terminar_shift(request, id_shift):
         },
         status=200,
     )
+
+from apps.trip.models import Trip
+
+@api_view(["POST"])
+def cancelar_shift(request, id_shift):
+    shift = Shift.objects.filter(pk=id_shift).first()
+
+    if not shift:
+        return Response({"message": "Shift não encontrado."}, status=404)
+
+    agora = timezone.now()
+
+    if shift.start_date <= agora:
+        return Response(
+            {"message": "Só é possível cancelar turnos futuros."},
+            status=400,
+        )
+
+    tem_viagens = Trip.objects.filter(shift_id=shift.id).exists()
+    if tem_viagens:
+        return Response(
+            {"message": "Não é possível cancelar este turno porque tem viagens associadas."},
+            status=400,
+        )
+
+    shift_id = str(shift.id)
+    shift.delete()
+
+    return Response(
+        {
+            "success": True,
+            "message": "Shift cancelado com sucesso.",
+            "id": shift_id,
+        },
+        status=200,
+    )
