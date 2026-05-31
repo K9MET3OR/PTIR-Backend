@@ -1,5 +1,4 @@
-﻿from django.shortcuts import render
-from django.db import IntegrityError, connection
+﻿from django.db import IntegrityError, connection
 from django.conf import settings
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
@@ -10,43 +9,35 @@ from django.utils import timezone
 from apps.user.models import User
 from apps.user.client.models import Client
 from django.utils.dateparse import parse_datetime
-from apps.user.views import firebase_auth_required, get_user_from_request
 from apps.user.driver.models import Driver
 from apps.shift.models import Shift
 
 stripe.api_key = settings.STRIPE_SECRET_KEY if hasattr(settings, 'STRIPE_SECRET_KEY') else None
 
-# Create your views here.
 
 def trip_para_json(trip):
-    # Obter nome do motorista se existir
     driver_name = None
     if trip.driver_id:
         try:
-            # Driver herda de User, então pk é igual a user_id
             driver = Driver.objects.get(pk=trip.driver_id)
-            # Obter o nome a partir do atributo 'name' do User
             driver_name = driver.name or "Motorista"
         except Exception as e:
             print(f"Erro ao obter driver: {e}")
             driver_name = "Motorista"
-    
-    # Obter matrícula do táxi se existir
+
     taxi_matricula = None
     taxi_id = trip.taxi_id
-    
+
     print(f"[TRIP] Trip {trip.id}: taxi_id={taxi_id}, shift_id={trip.shift_id}")
-    
-    # Se o táxi não está diretamente atribuído, tentar obter do shift
+
     if not taxi_id and trip.shift_id:
         try:
-            from apps.shift.models import Shift
             shift = Shift.objects.get(pk=trip.shift_id)
             taxi_id = shift.taxi_id
             print(f"[TRIP] Obtido taxi_id do shift: {taxi_id}")
         except Exception as e:
             print(f"Erro ao obter shift: {e}")
-    
+
     if taxi_id:
         try:
             from apps.taxi.models import Taxi
@@ -57,9 +48,9 @@ def trip_para_json(trip):
             print(f"Erro ao obter taxi: {e}")
             taxi_matricula = "N/A"
     else:
-        print(f"[TRIP] taxi_id é None")
+        print("[TRIP] taxi_id é None")
         taxi_matricula = "N/A"
-    
+
     return {
         'id': str(trip.id),
         'client_id': str(trip.client_id),
@@ -81,6 +72,7 @@ def trip_para_json(trip):
         'updated_at': trip.updated_at.isoformat() if trip.updated_at else None,
     }
 
+
 @api_view(['POST'])
 def registar_trip(request):
     data = request.data
@@ -92,27 +84,23 @@ def registar_trip(request):
         'n_people',
     ]
 
-    # 1) Validar campos obrigat├│rios
     for campo in campos_obrigatorios:
         if campo not in data or str(data[campo]).strip() == '':
-            return Response({'message': f'{campo} ├® obrigat├│rio.'}, status=400)
+            return Response({'message': f'{campo} é obrigatório.'}, status=400)
 
-    # 2) Validar n├║mero de pessoas
     try:
         n_people = int(data['n_people'])
     except (TypeError, ValueError):
-        return Response({'message': 'n_people inv├ílido.'}, status=400)
+        return Response({'message': 'n_people inválido.'}, status=400)
 
     if n_people < 1 or n_people > 4:
         return Response({'message': 'n_people deve estar entre 1 e 4.'}, status=400)
 
-    # 3) Obter utilizador cliente
     try:
         user = User.objects.get(pk=data['client_id'], role='cliente')
     except User.DoesNotExist:
-        return Response({'message': 'Cliente inv├ílido.'}, status=400)
+        return Response({'message': 'Cliente inválido.'}, status=400)
 
-    # 4) Garantir que existe registo na tabela Client
     client = Client.objects.filter(pk=user.pk).first()
     if not client:
         with connection.cursor() as cursor:
@@ -122,16 +110,14 @@ def registar_trip(request):
             )
         client = Client.objects.get(pk=user.pk)
 
-    # 5) Tratar start_date
     start_date = data.get('start_date')
     if start_date:
         start_date = parse_datetime(start_date)
         if start_date is None:
-            return Response({'message': 'start_date inv├ílida.'}, status=400)
+            return Response({'message': 'start_date inválida.'}, status=400)
     else:
         start_date = timezone.now()
 
-    # 6) Criar viagem
     try:
         trip = Trip.objects.create(
             client=client,
@@ -185,7 +171,7 @@ def gerir_trip(request, id_trip):
     trip = Trip.objects.filter(pk=id_trip).first()
 
     if not trip:
-        return Response({'message': 'Trip n├úo encontrada.'}, status=404)
+        return Response({'message': 'Trip não encontrada.'}, status=404)
 
     if request.method == 'GET':
         return Response(
@@ -238,13 +224,13 @@ def gerir_trip(request, id_trip):
     if 'start_location' in data:
         start_location = str(data['start_location']).strip()
         if start_location == '':
-            return Response({'message': 'start_location ├® obrigat├│rio.'}, status=400)
+            return Response({'message': 'start_location é obrigatório.'}, status=400)
         trip.start_location = start_location
 
     if 'end_location' in data:
         end_location = str(data['end_location']).strip()
         if end_location == '':
-            return Response({'message': 'end_location ├® obrigat├│rio.'}, status=400)
+            return Response({'message': 'end_location é obrigatório.'}, status=400)
         trip.end_location = end_location
 
     if 'n_people' in data:
@@ -278,68 +264,41 @@ def accept_trip(request, pk):
     try:
         trip = Trip.objects.get(pk=pk)
     except Trip.DoesNotExist:
-        return Response({'message': 'Trip n├úo encontrada.'}, status=404)
+        return Response({'message': 'Trip não encontrada.'}, status=404)
 
     if trip.status_trip != "pending":
-        return Response({"message": "Trip n├úo est├í dispon├¡vel para aceitar."}, status=400)
+        return Response({"message": "Trip não está disponível para aceitar."}, status=400)
 
     driver_id = request.data.get('driver_id')
     if not driver_id:
-        return Response({'message': 'driver_id ├® obrigat├│rio.'}, status=400)
-    
-    if not Driver.objects.filter(pk=driver_id).exists():
-        return Response({'message': 'Motorista inv├ílido.'}, status=400)
-    
+        return Response({'message': 'driver_id é obrigatório.'}, status=400)
+
+    try:
+        driver = Driver.objects.get(pk=driver_id)
+    except Driver.DoesNotExist:
+        return Response({'message': 'Motorista inválido.'}, status=400)
+
     agora = timezone.now()
 
     turno_ativo = Shift.objects.filter(
         driver_id=driver.id,
-        status_shift__in=["active"],
         start_date__lte=agora,
         end_date__gt=agora,
-    ).first()
+    ).exclude(status_shift='inactive').first()
 
     if not turno_ativo:
         return Response(
-            {"message": "O motorista só pode aceitar pedidos durante um turno ativo."},
+            {"message": "Só podes aceitar pedidos durante um turno ativo."},
             status=400,
         )
-    
-    trip.driver_id = driver_id
+
+    trip.driver_id = driver.id
+    trip.shift_id = turno_ativo.id
+    trip.taxi_id = turno_ativo.taxi_id
     trip.status_trip = "accepted"
-    
-    # Tentar atribuir o shift ativo do motorista (se existir)
-    try:
-        from apps.shift.models import Shift
-        from django.utils import timezone
-        
-        # Buscar shift ativo do motorista
-        # Procurar primeiro por um shift que cobre o horário atual
-        now = timezone.now()
-        active_shift = Shift.objects.filter(
-            driver_id=driver_id,
-            status_shift='active',
-            start_date__lte=now,
-            end_date__gte=now
-        ).first()
-        
-        # Se não encontrar um que cobre agora, pegar o mais recente ativo
-        if not active_shift:
-            active_shift = Shift.objects.filter(
-                driver_id=driver_id,
-                status_shift='active'
-            ).order_by('-start_date').first()
-        
-        print(f"[TRIP] Accept - Procurando shift para driver {driver_id}, agora: {now}")
-        print(f"[TRIP] Accept - Shift encontrado: {active_shift}")
-        
-        if active_shift:
-            trip.shift_id = active_shift.id
-            trip.taxi_id = active_shift.taxi_id
-            print(f"[TRIP] Accept - Atribuído shift {active_shift.id}, taxi {active_shift.taxi_id}")
-    except Exception as e:
-        print(f"Erro ao atribuir shift: {e}")
-    
+
+    print(f"[TRIP] Accept - Driver {driver.id}, shift {turno_ativo.id}, taxi {turno_ativo.taxi_id}")
+
     trip.save()
 
     return Response({
@@ -351,12 +310,10 @@ def accept_trip(request, pk):
 
 @api_view(['POST'])
 def finish_trip(request, pk):
-    from django.utils import timezone
-    
     try:
         trip = Trip.objects.get(pk=pk)
     except Trip.DoesNotExist:
-        return Response({'message': 'Trip n├úo encontrada.'}, status=404)
+        return Response({'message': 'Trip não encontrada.'}, status=404)
 
     trip.status_trip = "finished"
     trip.end_date = timezone.now()
@@ -374,10 +331,10 @@ def reject_trip(request, pk):
     try:
         trip = Trip.objects.get(pk=pk)
     except Trip.DoesNotExist:
-        return Response({'message': 'Trip n├úo encontrada.'}, status=404)
+        return Response({'message': 'Trip não encontrada.'}, status=404)
 
     if trip.status_trip != "pending":
-        return Response({"message": "Trip n├úo est├í dispon├¡vel para rejeitar."}, status=400)
+        return Response({"message": "Trip não está disponível para rejeitar."}, status=400)
 
     trip.status_trip = "cancelled"
     trip.save()
@@ -389,63 +346,54 @@ def reject_trip(request, pk):
     }, status=200)
 
 
-# ---------------------------------------------------------------------------
-# Pagamentos com Stripe
-# ---------------------------------------------------------------------------
-
-
 @api_view(['POST'])
 def criar_pagamento(request):
     """
-    Cria uma inten├º├úo de pagamento Stripe para uma viagem.
-    
+    Cria uma intenção de pagamento Stripe para uma viagem.
+
     Body esperado:
     {
-        "amount": 2500,      # em centavos (25.00 EUR)
+        "amount": 2500,
         "trip_id": "uuid-da-viagem",
-        "description": "Viagem de Uber"  # opcional
+        "description": "Viagem de Uber"
     }
     """
     if not stripe.api_key:
         return Response(
-            {'message': 'Stripe n├úo est├í configurado no servidor'},
+            {'message': 'Stripe não está configurado no servidor'},
             status=status.HTTP_400_BAD_REQUEST
         )
-    
+
     data = request.data or {}
     amount = data.get('amount')
     trip_id = data.get('trip_id')
     description = data.get('description', 'Pagamento de Viagem')
-    
-    # Validar campos obrigat├│rios
+
     if not amount or not trip_id:
         return Response(
-            {'message': 'amount e trip_id s├úo obrigat├│rios'},
+            {'message': 'amount e trip_id são obrigatórios'},
             status=status.HTTP_400_BAD_REQUEST
         )
-    
-    # Validar que a viagem existe
+
     try:
         trip = Trip.objects.get(pk=trip_id)
     except Trip.DoesNotExist:
         return Response(
-            {'message': 'Viagem n├úo encontrada'},
+            {'message': 'Viagem não encontrada'},
             status=status.HTTP_404_NOT_FOUND
         )
-    
-    # Validar amount
+
     try:
         amount_int = int(amount)
         if amount_int <= 0:
             raise ValueError()
     except (ValueError, TypeError):
         return Response(
-            {'message': 'amount deve ser um n├║mero positivo em centavos'},
+            {'message': 'amount deve ser um número positivo em centavos'},
             status=status.HTTP_400_BAD_REQUEST
         )
-    
+
     try:
-        # Criar payment intent no Stripe
         intent = stripe.PaymentIntent.create(
             amount=amount_int,
             currency='eur',
@@ -455,7 +403,7 @@ def criar_pagamento(request):
                 'client_id': str(trip.client_id)
             }
         )
-        
+
         return Response({
             'success': True,
             'client_secret': intent.client_secret,
@@ -463,7 +411,7 @@ def criar_pagamento(request):
             'amount': amount_int,
             'currency': 'eur'
         }, status=status.HTTP_200_OK)
-        
+
     except stripe.error.StripeError as e:
         return Response(
             {'message': f'Erro Stripe: {str(e)}'},
@@ -480,7 +428,7 @@ def criar_pagamento(request):
 def confirmar_pagamento(request):
     """
     Confirma o pagamento e atualiza o status da viagem.
-    
+
     Body esperado:
     {
         "payment_intent_id": "pi_xxxxx",
@@ -489,50 +437,47 @@ def confirmar_pagamento(request):
     """
     if not stripe.api_key:
         return Response(
-            {'message': 'Stripe n├úo est├í configurado no servidor'},
+            {'message': 'Stripe não está configurado no servidor'},
             status=status.HTTP_400_BAD_REQUEST
         )
-    
+
     data = request.data or {}
     payment_intent_id = data.get('payment_intent_id')
     trip_id = data.get('trip_id')
-    
+
     if not payment_intent_id or not trip_id:
         return Response(
-            {'message': 'payment_intent_id e trip_id s├úo obrigat├│rios'},
+            {'message': 'payment_intent_id e trip_id são obrigatórios'},
             status=status.HTTP_400_BAD_REQUEST
         )
-    
+
     try:
-        # Verificar o status do payment intent no Stripe
         intent = stripe.PaymentIntent.retrieve(payment_intent_id)
-        
+
         if intent.status == 'succeeded':
-            # Atualizar o status da viagem
             try:
-                from django.utils import timezone
                 trip = Trip.objects.get(pk=trip_id)
                 trip.status_trip = 'finished'
                 trip.end_date = timezone.now()
                 trip.save()
-                
+
                 return Response({
                     'success': True,
                     'message': 'Pagamento confirmado com sucesso',
                     'trip': trip_para_json(trip)
                 }, status=status.HTTP_200_OK)
-                
+
             except Trip.DoesNotExist:
                 return Response(
-                    {'message': 'Viagem n├úo encontrada'},
+                    {'message': 'Viagem não encontrada'},
                     status=status.HTTP_404_NOT_FOUND
                 )
         else:
             return Response(
-                {'message': f'Pagamento n├úo foi confirmado. Status: {intent.status}'},
+                {'message': f'Pagamento não foi confirmado. Status: {intent.status}'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-            
+
     except stripe.error.StripeError as e:
         return Response(
             {'message': f'Erro ao verificar pagamento: {str(e)}'},
@@ -548,11 +493,11 @@ def listar_viagens_motorista(request, driver_id):
             driver_id=driver_id,
             status_trip='finished'
         ).order_by('-start_date')
-        
+
         resultado = []
         for trip in viagens:
             resultado.append(trip_para_json(trip))
-        
+
         return Response(
             {
                 'success': True,
