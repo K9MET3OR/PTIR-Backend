@@ -588,3 +588,34 @@ def listar_viagens_motorista(request, driver_id):
             {'message': f'Erro ao listar viagens: {str(e)}'},
             status=400,
         )
+    
+@api_view(['POST'])
+def cancel_driver_wait(request, pk):
+    try:
+        trip = Trip.objects.get(pk=pk)
+    except Trip.DoesNotExist:
+        return Response({'message': 'Trip não encontrada.'}, status=404)
+
+    if trip.status_trip != "driver_accepted":
+        return Response(
+            {'message': 'Esta viagem não está à espera de confirmação do cliente.'},
+            status=400
+        )
+
+    rejected_ids = [str(driver_uuid) for driver_uuid in (trip.rejected_driver_ids or [])]
+
+    if trip.driver_id and str(trip.driver_id) not in rejected_ids:
+        rejected_ids.append(str(trip.driver_id))
+
+    trip.rejected_driver_ids = rejected_ids
+    trip.driver_id = None
+    trip.taxi_id = None
+    trip.shift_id = None
+    trip.status_trip = "pending"
+    trip.save()
+
+    return Response({
+        'success': True,
+        'message': 'Tempo de espera expirado. O pedido voltou a ficar pendente.',
+        'trip': trip_para_json(trip)
+    }, status=200)

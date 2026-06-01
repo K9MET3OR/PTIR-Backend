@@ -15,7 +15,7 @@ urlpatterns = [
     path('driver/<uuid:driver_id>', views.listar_viagens_motorista),
     path('<uuid:pk>/client-confirm', views.client_confirm_trip),
     path('<uuid:pk>/client-reject', views.client_reject_trip),
-    
+    path('<uuid:pk>/cancel-driver-wait', views.cancel_driver_wait),
 
     path('register/', views.registar_trip),
     path('<uuid:id_trip>/', views.gerir_trip),
@@ -28,4 +28,7 @@ urlpatterns = [
     path('driver/<uuid:driver_id>/', views.listar_viagens_motorista),
     path('<uuid:pk>/client-confirm/', views.client_confirm_trip),
     path('<uuid:pk>/client-reject/', views.client_reject_trip),
+    path('<uuid:pk>/cancel-driver-wait/', views.cancel_driver_wait),
 ]
+
+XXX_TESTE_URLS = True
