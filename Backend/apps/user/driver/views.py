@@ -146,6 +146,42 @@ def _validate_num_carta(num_carta: str):
         )
     return None
 
+def _validate_validade_carta(validade_raw):
+    """
+    Valida a validade da carta de condução.
+    A carta não pode estar expirada e não pode ter validade superior a 15 anos no futuro.
+    """
+    if not validade_raw:
+        return None, Response(
+            {'message': 'validade_carta é obrigatória.'},
+            status=400,
+        )
+
+    try:
+        validade = datetime.strptime(str(validade_raw), '%Y-%m-%d').date()
+    except ValueError:
+        return None, Response(
+            {'message': 'validade_carta inválida. Use YYYY-MM-DD.'},
+            status=400,
+        )
+
+    hoje = date.today()
+    limite_maximo = hoje.replace(year=hoje.year + 15)
+
+    if validade < hoje:
+        return None, Response(
+            {'message': 'A carta de condução está expirada.'},
+            status=400,
+        )
+
+    if validade > limite_maximo:
+        return None, Response(
+            {'message': 'A validade da carta não pode ser superior a 15 anos no futuro.'},
+            status=400,
+        )
+
+    return validade, None
+
 
 # ---------------------------------------------------------------------------
 # GET /motorista/localidade/<codigo_postal>/
@@ -233,12 +269,9 @@ def registo_motorista(request):
         return Response({'message': 'n_carta deve ter pelo menos 5 caracteres.'}, status=400)
 
     # --- Validade da carta ---
-    validade_carta = None
-    if validade_carta_raw:
-        try:
-            validade_carta = datetime.strptime(validade_carta_raw, '%Y-%m-%d').date()
-        except ValueError:
-            return Response({'message': 'validade_carta inválida. Use YYYY-MM-DD.'}, status=400)
+    validade_carta, err = _validate_validade_carta(validade_carta_raw)
+    if err:
+        return err
 
     # --- Lookup localidade (opcional, mas se vier tem de ser válida) ---
     localidade = ''
@@ -493,14 +526,11 @@ def gerir_motorista(request, id_motorista):
         motorista.num_carta_conducao = num_carta
 
     if 'validade_carta' in data:
-        val = data['validade_carta']
-        if val:
-            try:
-                motorista.validade_carta = datetime.strptime(str(val), '%Y-%m-%d').date()
-            except ValueError:
-                return Response({'message': 'validade_carta invalida. Use YYYY-MM-DD.'}, status=400)
-        else:
-            motorista.validade_carta = None
+        validade_carta, err = _validate_validade_carta(data['validade_carta'])
+        if err:
+            return err
+
+        motorista.validade_carta = validade_carta
 
     if 'codigo_postal' in data:
         codigo_postal = str(data['codigo_postal']).strip()

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
+import re
 from decimal import Decimal, InvalidOperation
 from math import atan2, cos, radians, sin, sqrt
 from uuid import UUID
@@ -24,8 +25,23 @@ _MOTOR_CANON = {
 }
 _NIVEL_VALIDOS = frozenset(_NIVEL_CANON.keys())
 _MOTOR_VALIDOS = frozenset(_MOTOR_CANON.keys())
-_TAXI_UPDATE_FIELDS = frozenset(('modelo', 'matricula', 'ano_compra', 'consumo_medio', 'marca', 'tipo_motor', 'nivel_conforto', 'estado', 'latitude', 'longitude'))
+
+_TAXI_UPDATE_FIELDS = frozenset((
+    'modelo',
+    'matricula',
+    'ano_compra',
+    'consumo_medio',
+    'marca',
+    'tipo_motor',
+    'nivel_conforto',
+    'estado',
+    'latitude',
+    'longitude',
+    'observacoes',
+))
+
 _ESTADO_VALIDOS = frozenset(('disponivel', 'indisponivel', 'ocupado'))
+
 _TAXI_BRANDS = {
     'Toyota': {'Prius', 'Corolla', 'Camry', 'Yaris'},
     'Hyundai': {'Ioniq', 'i30', 'i20', 'Elantra'},
@@ -40,6 +56,17 @@ _TAXI_BRANDS = {
     'Nissan': {'Qashqai', 'Altima', 'Micra', 'X-Trail'},
     'Chevrolet': {'Cruze', 'Spark', 'Cobalt', 'Onix'},
 }
+
+_MATRICULA_RE = re.compile(
+    r'^([A-Z]{2}-\d{2}-[A-Z]{2}|'
+    r'[A-Z]{2}-\d{2}-\d{2}|'
+    r'\d{2}-[A-Z]{2}-\d{2}|'
+    r'\d{2}-\d{2}-[A-Z]{2})$'
+)
+
+
+def _validar_matricula(matricula: str) -> bool:
+    return bool(_MATRICULA_RE.match(str(matricula or '').strip().upper()))
 
 # ---------------------------------------------------------------------------
 # Helpers — serialização
@@ -63,6 +90,7 @@ def _taxi_to_dict(taxi: Taxi) -> dict:
         'tipo_motor': tipo_motor,
         'nivel_conforto': nivel_conforto,
         'estado': taxi.estado,
+        'observacoes': taxi.observacoes or '',
         'latitude': float(taxi.latitude) if taxi.latitude is not None else None,
         'longitude': float(taxi.longitude) if taxi.longitude is not None else None,
         'created_at': taxi.created_at.isoformat() if taxi.created_at else None,
@@ -132,8 +160,8 @@ def validate_taxi_payload(data):
         return 'modelo deve ter pelo menos 2 caracteres.'
 
     matricula = str(data.get('matricula', '')).strip().upper()
-    if len(matricula) < 5:
-        return 'matricula invalida.'
+    if not _validar_matricula(matricula):
+        return 'matricula invalida. Formatos aceites: AA-22-BB, AA-22-22, 22-AA-22 ou 22-22-AA.'
 
     ano = _parse_ano_compra(data.get('ano_compra'))
     if ano is None:
@@ -198,6 +226,7 @@ def _normalize_create_body(data):
         'tipo_motor': _MOTOR_CANON.get(motor, 'Combustão'),
         'nivel_conforto': _NIVEL_CANON.get(nivel, 'Básico'),
         'estado': 'disponivel',  # Novos táxis começam sempre disponíveis
+        'observacoes': str(data.get('observacoes', '') or '').strip(),
     }, None
 
 
@@ -221,8 +250,13 @@ def validate_taxi_update_payload(data):
 
     if 'matricula' in data:
         matricula = str(data['matricula']).strip().upper()
-        if len(matricula) < 5:
-            return 'matricula invalida.'
+        if not _validar_matricula(matricula):
+            return 'matricula invalida. Formatos aceites: AA-22-BB, AA-22-22, 22-AA-22 ou 22-22-AA.'
+        
+    if 'observacoes' in data and data['observacoes'] is not None:
+        observacoes = str(data['observacoes']).strip()
+        if len(observacoes) > 1000:
+            return 'observacoes não pode ter mais de 1000 caracteres.'
 
     if 'ano_compra' in data:
         ano = _parse_ano_compra(data.get('ano_compra'))
@@ -305,6 +339,8 @@ def _apply_taxi_updates(taxi: Taxi, data: dict) -> None:
             taxi.longitude = lng
         else:
             taxi.longitude = None
+    if 'observacoes' in data:
+        taxi.observacoes = str(data['observacoes'] or '').strip()
 
 
 def _get_taxi_or_response(id_taxi):

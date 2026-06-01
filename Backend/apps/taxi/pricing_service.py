@@ -26,6 +26,8 @@ class PricingService:
     NIGHT_START = 21
     NIGHT_END = 6
 
+    MINIMUM_PRICE = Decimal("0.51")
+
     @classmethod
     def _get_config_values(cls):
         """
@@ -85,8 +87,11 @@ class PricingService:
             * (Decimal("1.0") + night_surcharge)
         )
 
-        total_price = price_day + price_night
-        total_price = total_price.quantize(Decimal("0.01"))
+        raw_total_price = price_day + price_night
+        total_price = raw_total_price.quantize(Decimal("0.01"))
+
+        if total_price < cls.MINIMUM_PRICE:
+            total_price = cls.MINIMUM_PRICE
 
         return {
             "price": float(total_price),
@@ -98,6 +103,9 @@ class PricingService:
                 "night_surcharge_percent": float(night_surcharge * Decimal("100")),
                 "price_day": float(price_day.quantize(Decimal("0.01"))),
                 "price_night": float(price_night.quantize(Decimal("0.01"))),
+                "raw_total_price": float(raw_total_price.quantize(Decimal("0.01"))),
+                "minimum_price_applied": total_price == cls.MINIMUM_PRICE,
+                "minimum_price": float(cls.MINIMUM_PRICE),
             },
             "comfort_level": comfort_level,
         }
