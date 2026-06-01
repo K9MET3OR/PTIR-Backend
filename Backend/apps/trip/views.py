@@ -47,6 +47,7 @@ def motorista_tem_viagem_em_curso(driver_id, trip_id_atual=None):
             "driver_accepted",
             "client_confirmed",
             "in_progress",
+            "awaiting_payment",
         ],
     )
 
