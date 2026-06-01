@@ -75,9 +75,9 @@ def trips_by_driver(request):
         start_date__gte=start_dt,
         start_date__lte=end_dt,
         status_trip="finished",
-        driver_id__isnull=False,
+        driver__isnull=False,
     ).annotate(duration=duration_expr).values(
-        "driver_id"
+        "driver_id",
     ).annotate(
         total_trips=Count("id"),
         total_kms=Sum("n_kms"),
@@ -111,9 +111,9 @@ def trips_by_taxi(request):
         start_date__gte=start_dt,
         start_date__lte=end_dt,
         status_trip="finished",
-        taxi_id__isnull=False,
+        taxi__isnull=False,
     ).annotate(duration=duration_expr).values(
-        "taxi_id"
+        "taxi_id",
     ).annotate(
         total_trips=Count("id"),
         total_kms=Sum("n_kms"),
@@ -365,13 +365,21 @@ def refuel_summary(request):
 def refuel_by_motor_type(request):
     start_dt, end_dt = get_period(request)
 
+    duration_expr = ExpressionWrapper(
+        F("data_fim") - F("data_inicio"),
+        output_field=DurationField()
+    )
+
     rows = Refuel.objects.filter(
         data_inicio__gte=start_dt,
         data_inicio__lte=end_dt,
+    ).annotate(
+        duration=duration_expr
     ).values(
         "taxi__tipo_motor"
     ).annotate(
         total_euros=Sum("euros_pagos"),
+        total_duration=Sum("duration"),
         total_refuels=Count("id")
     ).order_by("-total_euros")
 
@@ -381,6 +389,70 @@ def refuel_by_motor_type(request):
             {
                 "tipo_motor": row["taxi__tipo_motor"],
                 "total_euros": str(row["total_euros"] or Decimal("0")),
+                "total_hours": duration_hours(row["total_duration"]),
+                "total_refuels": row["total_refuels"],
+            }
+            for row in rows
+        ]
+    })
+
+@api_view(["GET"])
+def refuel_by_taxi(request):
+    start_dt, end_dt = get_period(request)
+
+    tipo_motor = request.GET.get("tipo_motor")
+    metric = request.GET.get("metric", "euros")
+
+    if not tipo_motor:
+        return Response(
+            {
+                "success": False,
+                "message": "tipo_motor é obrigatório"
+            },
+            status=400
+        )
+
+    duration_expr = ExpressionWrapper(
+        F("data_fim") - F("data_inicio"),
+        output_field=DurationField()
+    )
+
+    rows = Refuel.objects.filter(
+        data_inicio__gte=start_dt,
+        data_inicio__lte=end_dt,
+        taxi__tipo_motor=tipo_motor,
+    ).annotate(
+        duration=duration_expr
+    ).values(
+        "taxi_id",
+        "taxi__matricula",
+        "taxi__modelo",
+        "taxi__marca",
+        "taxi__tipo_motor"
+    ).annotate(
+        total_euros=Sum("euros_pagos"),
+        total_duration=Sum("duration"),
+        total_refuels=Count("id")
+    )
+
+    if metric == "hours":
+        rows = rows.order_by("-total_duration")
+    else:
+        rows = rows.order_by("-total_euros")
+
+    return Response({
+        "success": True,
+        "tipo_motor": tipo_motor,
+        "metric": metric,
+        "taxis": [
+            {
+                "taxi_id": str(row["taxi_id"]),
+                "matricula": row["taxi__matricula"],
+                "modelo": row["taxi__modelo"],
+                "marca": row["taxi__marca"],
+                "tipo_motor": row["taxi__tipo_motor"],
+                "total_euros": str(row["total_euros"] or Decimal("0")),
+                "total_hours": duration_hours(row["total_duration"]),
                 "total_refuels": row["total_refuels"],
             }
             for row in rows
