@@ -5,6 +5,14 @@ urlpatterns = [
     path("trips/summary", views.trips_summary),
     path("trips/by-driver", views.trips_by_driver),
     path("trips/by-taxi", views.trips_by_taxi),
+
+    path("trips/driver-details", views.trips_driver_details),
+    path("trips/taxi-details", views.trips_taxi_details),
+
+    path("trips/detail/<int:trip_id>", views.trip_detail),
+    path("drivers/detail/<int:driver_id>", views.driver_detail),
+    path("taxis/detail/<uuid:taxi_id>", views.taxi_detail),
+
     path("billing/summary", views.billing_summary),
     path("billing/by-client", views.billing_by_client),
     path("refuel/summary", views.refuel_summary),
