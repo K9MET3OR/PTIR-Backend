@@ -12,6 +12,7 @@ from apps.invoice.models import Invoice
 from apps.refuel.models import Refuel
 from apps.taxi.models import Taxi
 from apps.user.driver.models import Driver
+from apps.user.client.models import Client
 
 
 def get_period(request):
@@ -172,6 +173,16 @@ def serialize_taxi(taxi):
         "updated_at": taxi.updated_at,
     }
 
+def serialize_client(client):
+    return {
+        "id": str(client.id),
+        "username": getattr(client, "username", None),
+        "email": getattr(client, "email", None),
+        "first_name": getattr(client, "first_name", None),
+        "last_name": getattr(client, "last_name", None),
+        "phone_number": getattr(client, "phone_number", None),
+    }
+
 
 def serialize_driver(driver):
     return {
@@ -297,13 +308,20 @@ def taxi_detail(request, taxi_id):
 def billing_summary(request):
     start_dt, end_dt = get_period(request)
 
-    invoices = Invoice.objects.filter(data__gte=start_dt, data__lte=end_dt)
+    invoices = Invoice.objects.filter(
+        data__gte=start_dt,
+        data__lte=end_dt
+    )
 
-    total = invoices.aggregate(total_euros=Sum("price"))
+    total = invoices.aggregate(
+        total_euros=Sum("price"),
+        total_invoices=Count("id")
+    )
 
     return Response({
         "success": True,
         "total_euros": str(total["total_euros"] or Decimal("0")),
+        "total_invoices": total["total_invoices"] or 0,
     })
 
 
@@ -332,6 +350,62 @@ def billing_by_client(request):
             for row in rows
         ]
     })
+
+@api_view(["GET"])
+def billing_client_details(request):
+    start_dt, end_dt = get_period(request)
+
+    client_id = request.GET.get("client_id")
+
+    if not client_id:
+        return Response(
+            {
+                "success": False,
+                "message": "client_id é obrigatório"
+            },
+            status=400
+        )
+
+    invoices = Invoice.objects.filter(
+        data__gte=start_dt,
+        data__lte=end_dt,
+        trip__client_id=client_id,
+    ).select_related(
+        "trip",
+        "trip__client"
+    ).order_by("-price")
+
+    return Response({
+        "success": True,
+        "client_id": str(client_id),
+        "invoices": [
+            {
+                "invoice_id": invoice.id,
+                "trip_id": invoice.trip.id if invoice.trip else None,
+                "client_id": str(invoice.trip.client_id) if invoice.trip else None,
+                "client_username": invoice.trip.client.username if invoice.trip and invoice.trip.client else None,
+                "price": str(invoice.price or Decimal("0")),
+                "data": invoice.data,
+                "trip_start_date": invoice.trip.start_date if invoice.trip else None,
+                "trip_end_date": invoice.trip.end_date if invoice.trip else None,
+                "start_location": getattr(invoice.trip, "start_location", None) if invoice.trip else None,
+                "end_location": getattr(invoice.trip, "end_location", None) if invoice.trip else None,
+                "n_kms": str(invoice.trip.n_kms or Decimal("0")) if invoice.trip else "0",
+            }
+            for invoice in invoices
+        ]
+    })
+
+
+@api_view(["GET"])
+def client_detail(request, client_id):
+    client = get_object_or_404(Client, id=client_id)
+
+    return Response({
+        "success": True,
+        "client": serialize_client(client)
+    })
+
 
 
 #USER STORY 16

@@ -15,6 +15,9 @@ urlpatterns = [
     path("billing/summary", views.billing_summary),
     path("billing/by-client", views.billing_by_client),
 
+    path("billing/client-details", views.billing_client_details),
+    path("clients/detail/<str:client_id>", views.client_detail),
+
     path("refuel/summary", views.refuel_summary),
     path("refuel/by-motor-type", views.refuel_by_motor_type),
 
