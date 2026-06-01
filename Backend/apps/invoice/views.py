@@ -1,3 +1,4 @@
+import re
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 from rest_framework.decorators import api_view
@@ -7,20 +8,49 @@ from .models import Invoice
 from apps.trip.models import Trip
 
 
+def validar_nif(nif):
+    return bool(re.match(r"^\d{9}$", str(nif or "").strip()))
+
+
+def obter_nif_cliente(trip):
+    """
+    Obtém o NIF do cliente associado à viagem.
+    Como Client herda de User, em princípio trip.client.nif deve existir.
+    """
+    try:
+        return getattr(trip.client, "nif", None)
+    except Exception:
+        return None
+
+
 def invoice_para_json(invoice):
     trip = invoice.trip
+    client_nif = obter_nif_cliente(trip)
 
     return {
         "id": str(invoice.id),
         "trip_id": str(invoice.trip_id),
+
         "n_fatura": invoice.n_fatura,
         "ano": invoice.ano,
         "numero_formatado": f"{invoice.n_fatura}/{invoice.ano}",
+
         "data": invoice.data.isoformat() if invoice.data else None,
-        "valor": str(invoice.valor),
+
+        # A API devolve "valor", mesmo que o campo no modelo se chame price.
+        "valor": str(invoice.price),
+
         "client_id": str(trip.client_id) if trip.client_id else None,
+        "client_nif": client_nif or "",
+
         "driver_id": str(trip.driver_id) if trip.driver_id else None,
         "taxi_id": str(trip.taxi_id) if trip.taxi_id else None,
+
+        "start_location": trip.start_location,
+        "end_location": trip.end_location,
+        "start_date": trip.start_date.isoformat() if trip.start_date else None,
+        "end_date": trip.end_date.isoformat() if trip.end_date else None,
+        "n_kms": str(trip.n_kms) if trip.n_kms is not None else None,
     }
 
 
@@ -43,7 +73,7 @@ def register_invoice(request):
 
     if trip.status_trip != "finished":
         return Response(
-            {"message": "Só é possível emitir fatura para viagens finalizadas."},
+            {"message": "Só é possível emitir fatura para viagens pagas e finalizadas."},
             status=400,
         )
 
@@ -59,11 +89,23 @@ def register_invoice(request):
             status=400,
         )
 
+    if not trip.end_date:
+        return Response(
+            {"message": "A viagem não tem data de fim."},
+            status=400,
+        )
+
+    if trip.end_date <= trip.start_date:
+        return Response(
+            {"message": "A data de fim da viagem tem de ser posterior à data de início."},
+            status=400,
+        )
+
     data_fatura = timezone.now()
 
-    if data_fatura <= trip.start_date:
+    if data_fatura < trip.end_date:
         return Response(
-            {"message": "A data da fatura tem de ser posterior à data de início da viagem."},
+            {"message": "A data da fatura tem de ser posterior ou igual ao fim da viagem."},
             status=400,
         )
 
@@ -79,18 +121,17 @@ def register_invoice(request):
             status=400,
         )
 
-    # Obter o NIF do cliente
-    try:
-        from apps.user.models import User
-        client_user = User.objects.get(pk=trip.client_id)
-        client_nif = client_user.nif
-    except Exception as e:
-        print(f"[INVOICE] Erro ao obter NIF do cliente: {e}")
-        client_nif = None
-
-    if not client_nif:
+    if not trip.driver_id:
         return Response(
-            {"message": "O cliente não tem NIF associado."},
+            {"message": "A viagem não tem motorista associado."},
+            status=400,
+        )
+
+    client_nif = obter_nif_cliente(trip)
+
+    if not validar_nif(client_nif):
+        return Response(
+            {"message": "O NIF do cliente é inválido ou não está associado."},
             status=400,
         )
 
@@ -104,12 +145,17 @@ def register_invoice(request):
                 n_fatura=n_fatura,
                 ano=ano,
                 data=data_fatura,
-                valor=trip.price,
+                price=trip.price,
             )
 
     except IntegrityError:
         return Response(
-            {"message": "Erro ao emitir fatura. Pode já existir uma fatura com esse número."},
+            {
+                "message": (
+                    "Erro ao emitir fatura. Pode já existir uma fatura para esta viagem "
+                    "ou uma fatura com esse número."
+                )
+            },
             status=409,
         )
 
