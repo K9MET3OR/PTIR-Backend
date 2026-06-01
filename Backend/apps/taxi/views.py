@@ -10,7 +10,7 @@ from rest_framework import status
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 
-from .models import Taxi
+from .models import Taxi, PricingConfig
 from apps.shift.models import Shift
 from apps.trip.models import Trip
 
@@ -761,5 +761,172 @@ def calcular_preco_com_conforto(request):
     except ValueError as e:
         return Response(
             {'message': str(e)},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+# ---------------------------------------------------------------------------
+# Views — Pricing configurável da User Story 3
+# ---------------------------------------------------------------------------
+
+def _pricing_config_to_dict(config: PricingConfig) -> dict:
+    return {
+        "id": str(config.id),
+        "preco_basico_minuto": float(config.preco_basico_minuto),
+        "preco_luxuoso_minuto": float(config.preco_luxuoso_minuto),
+        "agravamento_noturno_percentual": float(config.agravamento_noturno_percentual),
+        "updated_at": config.updated_at.isoformat() if config.updated_at else None,
+    }
+
+
+def _parse_decimal_positivo(raw, field_name, permite_zero=False):
+    try:
+        value = Decimal(str(raw))
+    except (InvalidOperation, TypeError, ValueError):
+        return None, f"{field_name} deve ser um número válido."
+
+    if permite_zero:
+        if value < 0:
+            return None, f"{field_name} não pode ser negativo."
+    else:
+        if value <= 0:
+            return None, f"{field_name} deve ser maior que 0."
+
+    return value, None
+
+
+@api_view(["GET", "PATCH", "PUT"])
+def pricing_config(request):
+    """
+    GET/PATCH da configuração de preços.
+
+    Campos:
+    - preco_basico_minuto
+    - preco_luxuoso_minuto
+    - agravamento_noturno_percentual
+    """
+
+    config = PricingConfig.get_config()
+
+    if request.method == "GET":
+        return Response(
+            {
+                "success": True,
+                "pricing": _pricing_config_to_dict(config),
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    data = request.data or {}
+
+    if "preco_basico_minuto" in data:
+        value, err = _parse_decimal_positivo(
+            data.get("preco_basico_minuto"),
+            "preco_basico_minuto",
+        )
+        if err:
+            return Response({"message": err}, status=status.HTTP_400_BAD_REQUEST)
+
+        config.preco_basico_minuto = value
+
+    if "preco_luxuoso_minuto" in data:
+        value, err = _parse_decimal_positivo(
+            data.get("preco_luxuoso_minuto"),
+            "preco_luxuoso_minuto",
+        )
+        if err:
+            return Response({"message": err}, status=status.HTTP_400_BAD_REQUEST)
+
+        config.preco_luxuoso_minuto = value
+
+    if "agravamento_noturno_percentual" in data:
+        value, err = _parse_decimal_positivo(
+            data.get("agravamento_noturno_percentual"),
+            "agravamento_noturno_percentual",
+            permite_zero=True,
+        )
+        if err:
+            return Response({"message": err}, status=status.HTTP_400_BAD_REQUEST)
+
+        config.agravamento_noturno_percentual = value
+
+    config.save()
+
+    return Response(
+        {
+            "success": True,
+            "message": "Configuração de preços atualizada.",
+            "pricing": _pricing_config_to_dict(config),
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
+@api_view(["POST"])
+def simular_preco_viagem(request):
+    """
+    Simula o preço de uma viagem fictícia entre duas datas/horas.
+
+    Body esperado:
+      {
+        "start_datetime": "2026-06-01T20:00",
+        "end_datetime": "2026-06-01T21:30",
+        "nivel_conforto": "Luxuoso"
+      }
+    """
+
+    from django.utils import timezone
+    from django.utils.dateparse import parse_datetime
+    from .pricing_service import PricingService
+
+    data = request.data or {}
+
+    start_raw = data.get("start_datetime")
+    end_raw = data.get("end_datetime")
+    nivel_conforto = str(data.get("nivel_conforto", "")).strip()
+
+    if not start_raw or not end_raw:
+        return Response(
+            {"message": "start_datetime e end_datetime são obrigatórios."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if nivel_conforto not in ("Básico", "Luxuoso"):
+        return Response(
+            {"message": "nivel_conforto deve ser 'Básico' ou 'Luxuoso'."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    start_dt = parse_datetime(str(start_raw))
+    end_dt = parse_datetime(str(end_raw))
+
+    if not start_dt or not end_dt:
+        return Response(
+            {"message": "Datas inválidas."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if timezone.is_naive(start_dt):
+        start_dt = timezone.make_aware(start_dt)
+
+    if timezone.is_naive(end_dt):
+        end_dt = timezone.make_aware(end_dt)
+
+    try:
+        result = PricingService.calculate_price(
+            start_datetime=start_dt,
+            end_datetime=end_dt,
+            comfort_level=nivel_conforto,
+        )
+
+        return Response(
+            {
+                "success": True,
+                **result,
+            },
+            status=status.HTTP_200_OK,
+        )
+    except ValueError as e:
+        return Response(
+            {"message": str(e)},
             status=status.HTTP_400_BAD_REQUEST,
         )
