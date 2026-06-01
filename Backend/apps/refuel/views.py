@@ -7,7 +7,7 @@ from rest_framework.response import Response
 
 from .models import Refuel
 from apps.shift.models import Shift
-from apps.user.views import firebase_auth_required, get_user_from_request
+from apps.user.views import firebase_auth_required
 
 
 def refuel_para_json(refuel):
@@ -98,8 +98,8 @@ def registar_refuel(request):
     if euros_pagos <= 0:
         return Response({"message": "euros_pagos deve ser superior a 0."}, status=400)
 
-    if kms_taxi < 0:
-        return Response({"message": "kms_taxi não pode ser negativo."}, status=400)
+    if kms_taxi <= 0:
+        return Response({"message": "kms_taxi deve ser superior a 0."}, status=400)
 
     litros = None
     kwh = None
@@ -119,6 +119,38 @@ def registar_refuel(request):
 
         if litros <= 0:
             return Response({"message": "litros deve ser superior a 0."}, status=400)
+
+    # Restrição 26:
+    # Os quilómetros entre reabastecimentos consecutivos têm de ser crescentes.
+    refuel_anterior = (
+        Refuel.objects
+        .filter(taxi=taxi, data_inicio__lt=data_inicio)
+        .order_by("-data_inicio", "-created_at")
+        .first()
+    )
+
+    if refuel_anterior and kms_taxi <= refuel_anterior.kms_taxi:
+        return Response(
+            {
+                "message": f"Os quilómetros devem ser superiores ao reabastecimento anterior ({refuel_anterior.kms_taxi} km)."
+            },
+            status=400,
+        )
+
+    refuel_seguinte = (
+        Refuel.objects
+        .filter(taxi=taxi, data_inicio__gt=data_inicio)
+        .order_by("data_inicio", "created_at")
+        .first()
+    )
+
+    if refuel_seguinte and kms_taxi >= refuel_seguinte.kms_taxi:
+        return Response(
+            {
+                "message": f"Os quilómetros devem ser inferiores ao reabastecimento seguinte ({refuel_seguinte.kms_taxi} km)."
+            },
+            status=400,
+        )
 
     try:
         refuel = Refuel.objects.create(
@@ -147,7 +179,7 @@ def registar_refuel(request):
 @api_view(["GET"])
 @firebase_auth_required
 def listar_refuels(request):
-    refuels = Refuel.objects.all().order_by("-data_inicio")
+    refuels = Refuel.objects.all().order_by("-data_inicio", "-created_at")
 
     return Response(
         {
@@ -162,7 +194,7 @@ def listar_refuels(request):
 @api_view(["GET"])
 @firebase_auth_required
 def listar_refuels_taxi(request, taxi_id):
-    refuels = Refuel.objects.filter(taxi_id=taxi_id).order_by("-data_inicio")
+    refuels = Refuel.objects.filter(taxi_id=taxi_id).order_by("-data_inicio", "-created_at")
 
     return Response(
         {
