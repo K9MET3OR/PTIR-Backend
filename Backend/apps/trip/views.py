@@ -11,8 +11,70 @@ from apps.user.client.models import Client
 from django.utils.dateparse import parse_datetime
 from apps.user.driver.models import Driver
 from apps.shift.models import Shift
+from decimal import Decimal, InvalidOperation
 
 stripe.api_key = settings.STRIPE_SECRET_KEY if hasattr(settings, 'STRIPE_SECRET_KEY') else None
+
+def valor_positivo(valor):
+    try:
+        return Decimal(str(valor)) > 0
+    except (InvalidOperation, TypeError, ValueError):
+        return False
+
+
+def validar_restricoes_trip(trip):
+    try:
+        n_people = int(trip.n_people)
+    except (TypeError, ValueError):
+        return "O número de pessoas é inválido."
+
+    if n_people < 1 or n_people > 4:
+        return "O número de pessoas deve estar entre 1 e 4."
+
+    if trip.n_kms is None or not valor_positivo(trip.n_kms):
+        return "Os quilómetros percorridos têm de ser positivos."
+
+    if trip.price is None or not valor_positivo(trip.price):
+        return "O preço da viagem tem de ser positivo."
+
+    return None
+
+
+def motorista_tem_viagem_em_curso(driver_id, trip_id_atual=None):
+    viagens = Trip.objects.filter(
+        driver_id=driver_id,
+        status_trip__in=[
+            "driver_accepted",
+            "client_confirmed",
+            "in_progress",
+        ],
+    )
+
+    if trip_id_atual:
+        viagens = viagens.exclude(pk=trip_id_atual)
+
+    return viagens.exists()
+
+def normalizar_conforto(valor):
+    texto = str(valor or '').strip().lower()
+
+    if texto in ['luxuoso', 'luxo']:
+        return 'luxuoso'
+
+    return 'básico'
+
+def existe_sobreposicao_viagem(trip, inicio, fim):
+    if not trip.driver_id:
+        return False
+
+    return Trip.objects.filter(
+        driver_id=trip.driver_id,
+        start_date__isnull=False,
+        end_date__isnull=False,
+        start_date__lt=fim,
+        end_date__gt=inicio,
+        status_trip__in=["awaiting_payment", "finished"],
+    ).exclude(pk=trip.pk).exists()
 
 
 def trip_para_json(trip):
@@ -271,7 +333,7 @@ def accept_trip(request, pk):
         driver = Driver.objects.get(pk=driver_id)
     except Driver.DoesNotExist:
         return Response({'message': 'Motorista inválido.'}, status=400)
-    
+
     rejected_ids = [str(driver_uuid) for driver_uuid in (trip.rejected_driver_ids or [])]
 
     if str(driver.id) in rejected_ids:
@@ -279,7 +341,7 @@ def accept_trip(request, pk):
             {"message": "Este pedido já rejeitou este motorista."},
             status=400,
         )
-    
+
     agora = timezone.now()
 
     turno_ativo = Shift.objects.filter(
@@ -291,6 +353,45 @@ def accept_trip(request, pk):
     if not turno_ativo:
         return Response(
             {"message": "Só podes aceitar pedidos durante um turno ativo."},
+            status=400,
+        )
+    
+    try:
+        taxi_turno = turno_ativo.taxi
+    except Exception:
+        taxi_turno = None
+
+    if not taxi_turno:
+        return Response(
+            {"message": "O turno ativo não tem táxi associado."},
+            status=400,
+        )
+
+    if normalizar_conforto(taxi_turno.nivel_conforto) != normalizar_conforto(trip.nivel_conforto):
+        return Response(
+            {
+                "message": (
+                    "Este pedido exige um nível de conforto diferente "
+                    "do táxi associado ao teu turno."
+                )
+            },
+            status=400,
+        )
+
+    if motorista_tem_viagem_em_curso(driver.id):
+        return Response(
+            {"message": "Não podes aceitar outro pedido enquanto tens uma viagem ou pedido em curso."},
+            status=400,
+        )
+
+    try:
+        n_people = int(trip.n_people)
+    except (TypeError, ValueError):
+        return Response({"message": "O número de pessoas é inválido."}, status=400)
+
+    if n_people < 1 or n_people > 4:
+        return Response(
+            {"message": "O número de pessoas deve estar entre 1 e 4."},
             status=400,
         )
 
@@ -374,8 +475,57 @@ def start_trip(request, pk):
             status=400
         )
 
+    if not trip.driver_id:
+        return Response(
+            {'message': 'Esta viagem não tem motorista associado.'},
+            status=400
+        )
+
+    if not trip.shift_id:
+        return Response(
+            {'message': 'Esta viagem não tem turno associado.'},
+            status=400
+        )
+
+    agora = timezone.now()
+
+    try:
+        shift = Shift.objects.get(pk=trip.shift_id)
+    except Shift.DoesNotExist:
+        return Response({'message': 'Turno inválido.'}, status=400)
+
+    if shift.status_shift == "inactive":
+        return Response(
+            {'message': 'Não é possível iniciar uma viagem num turno inativo.'},
+            status=400
+        )
+
+    if not (shift.start_date <= agora < shift.end_date):
+        return Response(
+            {'message': 'A viagem só pode ser iniciada dentro do período do turno.'},
+            status=400
+        )
+
+    if motorista_tem_viagem_em_curso(trip.driver_id, trip.pk):
+        return Response(
+            {'message': 'O motorista já tem outra viagem ou pedido em curso.'},
+            status=400
+        )
+
+    try:
+        n_people = int(trip.n_people)
+    except (TypeError, ValueError):
+        return Response({'message': 'O número de pessoas é inválido.'}, status=400)
+
+    if n_people < 1 or n_people > 4:
+        return Response(
+            {'message': 'O número de pessoas deve estar entre 1 e 4.'},
+            status=400
+        )
+
     trip.status_trip = "in_progress"
-    trip.start_date = timezone.now()
+    trip.start_date = agora
+    trip.end_date = None
     trip.save()
 
     return Response({
@@ -391,8 +541,55 @@ def finish_trip(request, pk):
     except Trip.DoesNotExist:
         return Response({'message': 'Trip não encontrada.'}, status=404)
 
+    if trip.status_trip != "in_progress":
+        return Response(
+            {'message': 'Só é possível terminar uma viagem que esteja em progresso.'},
+            status=400
+        )
+
+    if not trip.start_date:
+        return Response(
+            {'message': 'A viagem não tem hora de início registada.'},
+            status=400
+        )
+
+    if not trip.shift_id:
+        return Response(
+            {'message': 'Esta viagem não tem turno associado.'},
+            status=400
+        )
+
+    fim = timezone.now()
+
+    if trip.start_date >= fim:
+        return Response(
+            {'message': 'A hora de início da viagem tem de ser anterior à hora de fim.'},
+            status=400
+        )
+
+    try:
+        shift = Shift.objects.get(pk=trip.shift_id)
+    except Shift.DoesNotExist:
+        return Response({'message': 'Turno inválido.'}, status=400)
+
+    if trip.start_date < shift.start_date or fim > shift.end_date:
+        return Response(
+            {'message': 'A viagem tem de estar contida no período do turno.'},
+            status=400
+        )
+
+    erro_restricoes = validar_restricoes_trip(trip)
+    if erro_restricoes:
+        return Response({'message': erro_restricoes}, status=400)
+
+    if existe_sobreposicao_viagem(trip, trip.start_date, fim):
+        return Response(
+            {'message': 'Esta viagem não pode sobrepor-se a outra viagem do motorista.'},
+            status=400
+        )
+
     trip.status_trip = "awaiting_payment"
-    trip.end_date = timezone.now()
+    trip.end_date = fim
     trip.save()
 
     return Response({
@@ -533,8 +730,17 @@ def confirmar_pagamento(request):
         if intent.status == 'succeeded':
             try:
                 trip = Trip.objects.get(pk=trip_id)
+                if trip.status_trip != 'awaiting_payment':
+                    return Response(
+                        {'message': 'Esta viagem não está à espera de pagamento.'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+
                 trip.status_trip = 'finished'
-                trip.end_date = timezone.now()
+
+                if not trip.end_date:
+                    trip.end_date = timezone.now()
+
                 trip.save()
 
                 return Response({
